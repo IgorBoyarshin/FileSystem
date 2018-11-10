@@ -11,6 +11,7 @@ bool FileSystem::processMount(const std::string& deviceName) {
             deviceName, m_Device->binary | m_Device->in | m_Device->out | m_Device->ate);
     if (!m_Device->is_open()) {
         std::cout << "Could not open device " << deviceName << std::endl;
+        m_Device.release();
         return false;
     }
 
