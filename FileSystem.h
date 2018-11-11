@@ -7,6 +7,7 @@
 #include <array>
 #include <memory>
 #include <cassert>
+#include <cmath>
 
 
 struct Block {
@@ -108,131 +109,33 @@ class Directory : public File {
 };
 
 
+class BlockMap {
+    private:
+        std::vector<char> m_BlockAvailabilityMap;
+
+    public:
+        // Returns whether is free
+        bool operator[](unsigned int blockIndex) const;
+
+        // The tail of the last block stored is unspecified
+        void flushBlockMap(std::fstream& device) const;
+
+        void clear();
+        void add(char block);
+
+        BlockMap(std::vector<char> map);
+};
+
+
 class FileSystem {
     private:
         std::unique_ptr<std::fstream> m_Device;
         std::string m_DeviceName;
 
+        BlockMap m_BlockMap;
+
     public:
-        bool process(Command command, std::vector<std::string>& arguments) {
-            switch (command) {
-                case Command::Mount:
-                    if (arguments.size() != 1) {
-                        std::cout << "Expecting 1 argument: device name" << std::endl;
-                        return false;
-                    }
-                    return mount(arguments[0]);
-                case Command::Umount:
-                    if (arguments.size() != 0) {
-                        std::cout << "Expecting no arguments" << std::endl;
-                        return false;
-                    }
-                    return umount();
-                case Command::Filestat:
-                    if (arguments.size() != 1) {
-                        std::cout << "Expecting 1 argument: descriptor id" << std::endl;
-                        return false;
-                    }
-                    try {
-                        const unsigned int fd = std::stoi(arguments[0]);
-                        return filestat(fd);
-                    } catch (std::exception& e) {
-                        std::cout << "Expection an int argument" << std::endl;
-                        return false;
-                    }
-                case Command::Ls:
-                    if (arguments.size() != 0) {
-                        std::cout << "Expecting no arguments" << std::endl;
-                        return false;
-                    }
-                    return ls();
-                case Command::Create:
-                    if (arguments.size() != 1) {
-                        std::cout << "Expecting 1 argument: file name" << std::endl;
-                        return false;
-                    }
-                    return create(arguments[0]);
-                case Command::Open:
-                    if (arguments.size() != 1) {
-                        std::cout << "Expecting 1 argument: file name" << std::endl;
-                        return false;
-                    }
-                    {
-                        unsigned int fd;
-                        const bool result = open(arguments[0], fd);
-                        std::cout << "Opened file " << arguments[0] << " with fd=" << fd << std::endl;
-                        return result;
-                    }
-                case Command::Close:
-                    if (arguments.size() != 1) {
-                        std::cout << "Expecting 1 argument: file descriptor" << std::endl;
-                        return false;
-                    }
-                    try {
-                        return close(std::stoi(arguments[0]));
-                    } catch (std::exception& e) {
-                        std::cout << "Excepting an int argument" << std::endl;
-                        return false;
-                    }
-                case Command::Read:
-                    if (arguments.size() != 3) {
-                        std::cout << "Expecting 3 arguments: file descriptor, shift, size" << std::endl;
-                        return false;
-                    }
-                    try {
-                        const unsigned int fd = std::stoi(arguments[0]);
-                        const unsigned int shift = std::stoi(arguments[1]);
-                        const unsigned int size = std::stoi(arguments[2]);
-                        std::string buff;
-                        const bool result = read(fd, shift, size, buff);
-                        std::cout << buff << std::endl;
-                        return result;
-                    } catch (std::exception& e) {
-                        std::cout << "Expecting an int argument" << std::endl;
-                        return false;
-                    }
-                case Command::Write:
-                    if (arguments.size() != 4) {
-                        std::cout << "Expecting 4 arguments: file descriptor, shift, size, string" << std::endl;
-                        return false;
-                    }
-                    try {
-                        const unsigned int fd = std::stoi(arguments[0]);
-                        const unsigned int shift = std::stoi(arguments[1]);
-                        const unsigned int size = std::stoi(arguments[2]);
-                        return write(fd, shift, size, arguments[4]);
-                    } catch (std::exception& e) {
-                        std::cout << "Expecting an int argument" << std::endl;
-                        return false;
-                    }
-                case Command::Link:
-                    if (arguments.size() != 2) {
-                        std::cout << "Expecting 2 arguments: target name, link name" << std::endl;
-                        return false;
-                    }
-                    return link(arguments[0], arguments[1]);
-                case Command::Unlink:
-                    if (arguments.size() != 1) {
-                        std::cout << "Expecting 1 argument: link name" << std::endl;
-                        return false;
-                    }
-                    return unlink(arguments[0]);
-                case Command::Truncate:
-                    if (arguments.size() != 2) {
-                        std::cout << "Expecting 2 arguments: file name, size" << std::endl;
-                        return false;
-                    }
-                    try {
-                        const unsigned int size = std::stoi(arguments[1]);
-                        return truncate(arguments[0], size);
-                    } catch (std::exception& e) {
-                        std::cout << "Expecting an int argument" << std::endl;
-                        return false;
-                    }
-                default:
-                    return false;
-            }
-        }
+        bool process(Command command, std::vector<std::string>& arguments);
 
     private:
         bool mount(const std::string& deviceName);

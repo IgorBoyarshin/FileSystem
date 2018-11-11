@@ -39,6 +39,159 @@ std::vector<Block> readBlocks(std::fstream& device, unsigned int shift, unsigned
     return blocks;
 }
 
+
+BlockMap::BlockMap(std::vector<char> map) : m_BlockAvailabilityMap(map) {}
+
+bool BlockMap::operator[](unsigned int blockIndex) const {
+    if (blockIndex >= m_BlockAvailabilityMap.size())
+        throw std::out_of_range("blockIndex >= map size");
+    const unsigned int byte = blockIndex / sizeof(char);
+    const unsigned int shift = blockIndex % sizeof(char);
+    return (m_BlockAvailabilityMap[byte] & (1 << shift)) == 1;
+}
+
+// The tail of the last block stored is unspecified
+void BlockMap::flushBlockMap(std::fstream& device) const {
+    std::vector<Block> blocks;
+    std::array<char, Block::SIZE> blockContent;
+    for (unsigned int i = 0; i < m_BlockAvailabilityMap.size(); i++) {
+        if (i % 8 == 0 && i != 0) blocks.emplace_back(blockContent);
+        blockContent[i % Block::SIZE] = m_BlockAvailabilityMap[i];
+    }
+
+    writeBlocks(device, 0, blocks);
+}
+
+void BlockMap::clear() {
+    m_BlockAvailabilityMap.clear();
+}
+
+void BlockMap::add(char block) {
+    m_BlockAvailabilityMap.push_back(block);
+}
+
+
+bool FileSystem::process(Command command, std::vector<std::string>& arguments) {
+    switch (command) {
+        case Command::Mount:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: device name" << std::endl;
+                return false;
+            }
+            return mount(arguments[0]);
+        case Command::Umount:
+            if (arguments.size() != 0) {
+                std::cout << "Expecting no arguments" << std::endl;
+                return false;
+            }
+            return umount();
+        case Command::Filestat:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: descriptor id" << std::endl;
+                return false;
+            }
+            try {
+                const unsigned int fd = std::stoi(arguments[0]);
+                return filestat(fd);
+            } catch (std::exception& e) {
+                std::cout << "Expection an int argument" << std::endl;
+                return false;
+            }
+        case Command::Ls:
+            if (arguments.size() != 0) {
+                std::cout << "Expecting no arguments" << std::endl;
+                return false;
+            }
+            return ls();
+        case Command::Create:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: file name" << std::endl;
+                return false;
+            }
+            return create(arguments[0]);
+        case Command::Open:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: file name" << std::endl;
+                return false;
+            }
+            {
+                unsigned int fd;
+                const bool result = open(arguments[0], fd);
+                std::cout << "Opened file " << arguments[0] << " with fd=" << fd << std::endl;
+                return result;
+            }
+        case Command::Close:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: file descriptor" << std::endl;
+                return false;
+            }
+            try {
+                return close(std::stoi(arguments[0]));
+            } catch (std::exception& e) {
+                std::cout << "Excepting an int argument" << std::endl;
+                return false;
+            }
+        case Command::Read:
+            if (arguments.size() != 3) {
+                std::cout << "Expecting 3 arguments: file descriptor, shift, size" << std::endl;
+                return false;
+            }
+            try {
+                const unsigned int fd = std::stoi(arguments[0]);
+                const unsigned int shift = std::stoi(arguments[1]);
+                const unsigned int size = std::stoi(arguments[2]);
+                std::string buff;
+                const bool result = read(fd, shift, size, buff);
+                std::cout << buff << std::endl;
+                return result;
+            } catch (std::exception& e) {
+                std::cout << "Expecting an int argument" << std::endl;
+                return false;
+            }
+        case Command::Write:
+            if (arguments.size() != 4) {
+                std::cout << "Expecting 4 arguments: file descriptor, shift, size, string" << std::endl;
+                return false;
+            }
+            try {
+                const unsigned int fd = std::stoi(arguments[0]);
+                const unsigned int shift = std::stoi(arguments[1]);
+                const unsigned int size = std::stoi(arguments[2]);
+                return write(fd, shift, size, arguments[4]);
+            } catch (std::exception& e) {
+                std::cout << "Expecting an int argument" << std::endl;
+                return false;
+            }
+        case Command::Link:
+            if (arguments.size() != 2) {
+                std::cout << "Expecting 2 arguments: target name, link name" << std::endl;
+                return false;
+            }
+            return link(arguments[0], arguments[1]);
+        case Command::Unlink:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: link name" << std::endl;
+                return false;
+            }
+            return unlink(arguments[0]);
+        case Command::Truncate:
+            if (arguments.size() != 2) {
+                std::cout << "Expecting 2 arguments: file name, size" << std::endl;
+                return false;
+            }
+            try {
+                const unsigned int size = std::stoi(arguments[1]);
+                return truncate(arguments[0], size);
+            } catch (std::exception& e) {
+                std::cout << "Expecting an int argument" << std::endl;
+                return false;
+            }
+        default:
+            return false;
+    }
+}
+
+
 bool FileSystem::mount(const std::string& deviceName) {
     if (m_Device) {
         std::cout << "Device " << m_DeviceName << " is mounted. Unmount it first" << std::endl;
@@ -60,6 +213,20 @@ bool FileSystem::mount(const std::string& deviceName) {
         std::cout << "Invalid header found. Cannot mount" << std::endl;
         m_Device.release();
         return false;
+    }
+
+    const unsigned int blocks = actualDeviceSize / Block::SIZE; // floored
+    const unsigned int blockMapSizeBytes = std::ceil(1.0 * blocks / sizeof(char));
+    const unsigned int blockMapSizeBlocks = std::ceil(1.0 * blockMapSizeBytes / Block::SIZE);
+
+    const std::vector<Block> map = readBlocks(*m_Device, 0, blockMapSizeBlocks);
+    unsigned int blocksCount = 0;
+    m_BlockMap.clear();
+    for (const Block& block : map) {
+        for (unsigned int i = 0; i < Block::SIZE; i++) {
+            if (blocksCount++ == blocks) break; // assumes it will also break from outter loop
+            m_BlockMap.add(block[i]);
+        }
     }
 
     return true;
