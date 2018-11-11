@@ -17,8 +17,8 @@ std::vector<std::string> split(const std::string &s, char delim) {
 
 
 int main() {
-    std::cout << sizeof(DeviceHeader) << std::endl;
     FileSystem fs;
+    fs.createEmptyDevice();
     std::string input;
     bool lastFailed = false;
     do {

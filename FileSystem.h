@@ -7,32 +7,38 @@
 #include <array>
 #include <memory>
 #include <cassert>
-#include <cmath>
 #include <unordered_map>
 #include <cstdint>
 
 
+constexpr inline unsigned int ceil(unsigned int a, unsigned int b) noexcept {
+    if (a % b == 0) return a / b;
+    else return (a / b + 1);
+}
+
+
 struct Block {
     public:
-        static unsigned int SIZE;
+        static uint16_t SIZE;
+        static const uint16_t INVALID;
     private:
-        std::vector<char> bytes;
+        std::vector<uint8_t> bytes;
     public:
-        inline char& operator[](unsigned int index) {
+        inline uint8_t& operator[](unsigned int index) {
             return bytes.at(index);
         }
 
-        inline const char& operator[](unsigned int index) const {
+        inline const uint8_t& operator[](unsigned int index) const {
             return bytes.at(index);
         }
 
-        inline const char* asArray() const {
+        inline const uint8_t* asArray() const {
             return bytes.data();
         }
 
         Block();
-        Block(std::vector<char> bytes);
-        Block(char* bytes);
+        Block(std::vector<uint8_t> bytes);
+        Block(uint8_t* bytes);
 };
 
 void writeBlock(std::fstream& device, unsigned int index, const Block& block);
@@ -63,19 +69,25 @@ Command toCommand(const std::string& str);
 struct DeviceHeader {
     public:
         uint16_t blockSize; // in bytes
-        uint16_t maxFiles; // max amount of files
+        uint16_t maxFiles;
+        uint16_t blocksPerFile;
+        uint16_t firstLogicalBlockShift;
 
         inline DeviceHeader()
-            : DeviceHeader(0, 0) {}
-        inline DeviceHeader(unsigned int blockSize, unsigned int maxFiles)
-            : blockSize(blockSize), maxFiles(maxFiles) {}
+            : DeviceHeader(0, 0, 0, 0) {}
+        inline DeviceHeader(uint16_t blockSize, uint16_t maxFiles,
+                uint16_t blocksPerFile, uint16_t firstLogicalBlockShift)
+            : blockSize(blockSize), maxFiles(maxFiles), blocksPerFile(blocksPerFile),
+            firstLogicalBlockShift(firstLogicalBlockShift) {}
 };
 
 class DeviceBlockMap {
-    private:
-        std::vector<char> m_BlockAvailabilityMap;
-
+    // private:
     public:
+        std::vector<uint8_t> m_BlocksUsageMap;
+
+    // public:
+        /* static unsigned int SIZE_IN_BLOCKS; */
         // Returns whether is free
         bool operator[](unsigned int blockIndex) const;
 
@@ -83,17 +95,45 @@ class DeviceBlockMap {
         void flush(std::fstream& device) const;
 
         void clear();
-        void add(char block);
+        void add(uint8_t byte);
 
         DeviceBlockMap();
-        DeviceBlockMap(std::vector<char> map);
+        DeviceBlockMap(std::vector<uint8_t> map);
+};
+
+enum class DeviceFileType : uint8_t {
+    Empty,
+    Regular,
+    Directory,
+    Symlink
+};
+
+struct DeviceFileDescriptor {
+    public:
+        static unsigned int BLOCKS_PER_FILE;
+
+        DeviceFileType fileType;
+        uint16_t size; // in bytes
+        uint8_t linksCount;
+        std::vector<uint16_t> blocks;
+
+        DeviceFileDescriptor();
+        DeviceFileDescriptor(DeviceFileType fileType, uint16_t size,
+                uint8_t linksCount, std::vector<uint16_t> blocks);
+
+        inline static unsigned int sizeInBytes() {
+            return sizeof(fileType) + sizeof(size) + sizeof(linksCount)
+                + BLOCKS_PER_FILE * sizeof(uint16_t);
+        }
+
+        inline static unsigned int sizeInBlocks() {
+            const unsigned int bytes = sizeInBytes();
+            assert(bytes % Block::SIZE == 0);
+            return (bytes / Block::SIZE);
+        }
 };
 
 
-/* enum class FileType { */
-/*     Regular, */
-/*     Directory */
-/* }; */
 /*  */
 /* class File { */
 /*     const FileType m_FileType; */
@@ -144,6 +184,8 @@ class FileSystem {
 
     public:
         bool process(Command command, std::vector<std::string>& arguments);
+
+        void createEmptyDevice();
 
     private:
 
