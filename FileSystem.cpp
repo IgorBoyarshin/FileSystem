@@ -1,10 +1,12 @@
 #include "FileSystem.h"
 
 
-Block::Block() {}
-Block::Block(std::array<char, SIZE> bytes) : bytes(bytes) {}
-Block::Block(char bytes[SIZE]) {
-    for (unsigned int i = 0; i < SIZE; i++) this->bytes[i] = bytes[i];
+Block::Block() : bytes(SIZE) {}
+Block::Block(std::vector<char> bytes) : bytes(bytes) {
+    assert(bytes.size() == SIZE);
+}
+Block::Block(char* bytes) {
+    for (unsigned int i = 0; i < SIZE; i++) this->bytes.push_back(bytes[i]);
 }
 
 
@@ -40,9 +42,10 @@ std::vector<Block> readBlocks(std::fstream& device, unsigned int shift, unsigned
 }
 
 
-BlockMap::BlockMap(std::vector<char> map) : m_BlockAvailabilityMap(map) {}
+DeviceBlockMap::DeviceBlockMap() {}
+DeviceBlockMap::DeviceBlockMap(std::vector<char> map) : m_BlockAvailabilityMap(map) {}
 
-bool BlockMap::operator[](unsigned int blockIndex) const {
+bool DeviceBlockMap::operator[](unsigned int blockIndex) const {
     if (blockIndex >= m_BlockAvailabilityMap.size())
         throw std::out_of_range("blockIndex >= map size");
     const unsigned int byte = blockIndex / sizeof(char);
@@ -50,23 +53,24 @@ bool BlockMap::operator[](unsigned int blockIndex) const {
     return (m_BlockAvailabilityMap[byte] & (1 << shift)) == 1;
 }
 
-// The tail of the last block stored is unspecified
-void BlockMap::flushBlockMap(std::fstream& device) const {
+// The tail of the last stored block is unspecified
+void DeviceBlockMap::flush(std::fstream& device) const {
     std::vector<Block> blocks;
-    std::array<char, Block::SIZE> blockContent;
+    std::vector<char> blockContent;
     for (unsigned int i = 0; i < m_BlockAvailabilityMap.size(); i++) {
-        if (i % 8 == 0 && i != 0) blocks.emplace_back(blockContent);
-        blockContent[i % Block::SIZE] = m_BlockAvailabilityMap[i];
+        const unsigned int shift = i % Block::SIZE;
+        if (shift == 0 && i != 0) blocks.emplace_back(blockContent);
+        blockContent[shift] = m_BlockAvailabilityMap[i];
     }
 
-    writeBlocks(device, 0, blocks);
+    writeBlocks(device, sizeof(DeviceHeader), blocks);
 }
 
-void BlockMap::clear() {
+void DeviceBlockMap::clear() {
     m_BlockAvailabilityMap.clear();
 }
 
-void BlockMap::add(char block) {
+void DeviceBlockMap::add(char block) {
     m_BlockAvailabilityMap.push_back(block);
 }
 
@@ -209,23 +213,31 @@ bool FileSystem::mount(const std::string& deviceName) {
     m_DeviceName = deviceName;
 
     const unsigned int actualDeviceSize = m_Device->tellg(); // because was openned at the end
-    if (actualDeviceSize <= Block::SIZE) {
+    if (actualDeviceSize < sizeof(DeviceHeader)) {
         std::cout << "Invalid header found. Cannot mount" << std::endl;
         m_Device.release();
         return false;
     }
 
-    const unsigned int blocks = actualDeviceSize / Block::SIZE; // floored
-    const unsigned int blockMapSizeBytes = std::ceil(1.0 * blocks / sizeof(char));
-    const unsigned int blockMapSizeBlocks = std::ceil(1.0 * blockMapSizeBytes / Block::SIZE);
+    // The only direct (byte-wise) interaction with device
+    m_Device->seekg(0);
+    m_Device->read(reinterpret_cast<char*>(&m_DeviceHeader.blockSize), sizeof(m_DeviceHeader.blockSize));
+    m_Device->seekg(0 + sizeof(m_DeviceHeader.blockSize));
+    m_Device->read(reinterpret_cast<char*>(&m_DeviceHeader.maxFiles), sizeof(m_DeviceHeader.maxFiles));
+    Block::SIZE = m_DeviceHeader.blockSize;
 
-    const std::vector<Block> map = readBlocks(*m_Device, 0, blockMapSizeBlocks);
-    unsigned int blocksCount = 0;
-    m_BlockMap.clear();
+    const unsigned int blocksCount = actualDeviceSize / Block::SIZE; // floored
+    const unsigned int mapSizeInBytes = std::ceil(1.0 * blocksCount / sizeof(char));
+    const unsigned int mapSizeInBlocks = std::ceil(1.0 * mapSizeInBytes / Block::SIZE);
+
+    const unsigned int mapShift = std::ceil(1.0 * sizeof(DeviceHeader) / Block::SIZE);
+    const std::vector<Block> map = readBlocks(*m_Device, mapShift, mapSizeInBlocks);
+    unsigned int addedBlocksCount = 0;
+    m_DeviceBlockMap.clear();
     for (const Block& block : map) {
         for (unsigned int i = 0; i < Block::SIZE; i++) {
-            if (blocksCount++ == blocks) break; // assumes it will also break from outter loop
-            m_BlockMap.add(block[i]);
+            if (addedBlocksCount++ == blocksCount) break; // assumes it won't continue the outter loop
+            m_DeviceBlockMap.add(block[i]);
         }
     }
 
@@ -316,7 +328,7 @@ std::string toString(Command command) {
         case Command::Truncate: return "truncate";
         case Command::INVALID: return "<invalid>";
     }
-    return "<invalid>";
+    return "<undefined>";
 }
 
 
@@ -335,11 +347,4 @@ Command toCommand(const std::string& str) {
     else if (str == "truncate") return Command::Truncate;
 
     return Command::INVALID;
-}
-
-
-std::ostream& operator<<(std::ostream& stream, const DevHeader& devHeader) {
-    stream << "Block size = " << devHeader.blockSize << std::endl;
-    stream << "Max files = " << devHeader.maxFiles << std::endl;
-    return stream;
 }

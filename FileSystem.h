@@ -8,13 +8,15 @@
 #include <memory>
 #include <cassert>
 #include <cmath>
+#include <unordered_map>
+#include <cstdint>
 
 
 struct Block {
     public:
-        static const unsigned int SIZE = 8;
+        static unsigned int SIZE;
     private:
-        std::array<char, SIZE> bytes;
+        std::vector<char> bytes;
     public:
         inline char& operator[](unsigned int index) {
             return bytes.at(index);
@@ -29,8 +31,8 @@ struct Block {
         }
 
         Block();
-        Block(std::array<char, SIZE> bytes);
-        Block(char bytes[SIZE]);
+        Block(std::vector<char> bytes);
+        Block(char* bytes);
 };
 
 void writeBlock(std::fstream& device, unsigned int index, const Block& block);
@@ -58,58 +60,18 @@ std::string toString(Command command);
 Command toCommand(const std::string& str);
 
 
-struct DevHeader {
+struct DeviceHeader {
     public:
-        /* unsigned int deviceSize; // in bytes */
-        unsigned int blockSize; // in bytes
-        unsigned int maxFiles; // max amount of files
+        uint16_t blockSize; // in bytes
+        uint16_t maxFiles; // max amount of files
 
-        inline DevHeader()
-            : DevHeader(0, 0) {}
-        inline DevHeader(unsigned int blockSize, unsigned int maxFiles)
+        inline DeviceHeader()
+            : DeviceHeader(0, 0) {}
+        inline DeviceHeader(unsigned int blockSize, unsigned int maxFiles)
             : blockSize(blockSize), maxFiles(maxFiles) {}
 };
 
-std::ostream& operator<<(std::ostream& stream, const DevHeader& devHeader);
-
-
-enum class FileType {
-    Regular,
-    Directory
-};
-
-class File {
-    const FileType m_FileType;
-
-    public:
-        File(FileType fileType) : m_FileType(fileType) {}
-};
-
-struct FileDescriptor {
-    FileType fileType;
-    unsigned int linksCount;
-    unsigned int size;
-    std::vector<unsigned int> blocksMap;
-    unsigned int extendedBlocksMapPtr;
-};
-
-struct DirectoryEntry {
-    std::string fileName;
-    FileDescriptor fd;
-
-    DirectoryEntry(const std::string& fileName, const FileDescriptor& fd);
-};
-
-class RegularFile : public File {
-
-};
-
-class Directory : public File {
-    std::vector<DirectoryEntry> entries;
-};
-
-
-class BlockMap {
+class DeviceBlockMap {
     private:
         std::vector<char> m_BlockAvailabilityMap;
 
@@ -118,26 +80,73 @@ class BlockMap {
         bool operator[](unsigned int blockIndex) const;
 
         // The tail of the last block stored is unspecified
-        void flushBlockMap(std::fstream& device) const;
+        void flush(std::fstream& device) const;
 
         void clear();
         void add(char block);
 
-        BlockMap(std::vector<char> map);
+        DeviceBlockMap();
+        DeviceBlockMap(std::vector<char> map);
 };
+
+
+/* enum class FileType { */
+/*     Regular, */
+/*     Directory */
+/* }; */
+/*  */
+/* class File { */
+/*     const FileType m_FileType; */
+/*  */
+/*     public: */
+/*         File(FileType fileType) : m_FileType(fileType) {} */
+/* }; */
+/*  */
+/* class RegularFile : public File { */
+/*     unsigned int linksCount; */
+/*     unsigned int size; */
+/*     std::vector<unsigned int> takenBlocks; */
+/*     unsigned int extendedTakenBlocks; */
+/* }; */
+/*  */
+/* class Directory : public File { */
+/*     std::vector<DirectoryEntry> entries; */
+/* }; */
+/*  */
+/* struct FileDescriptor { */
+/*     FileType fileType; */
+/* }; */
+/*  */
+/* struct DirectoryEntry { */
+/*     std::string fileName; */
+/*     FileDescriptor fd; */
+/*  */
+/*     DirectoryEntry(const std::string& fileName, const FileDescriptor& fd); */
+/* }; */
+
+
+
 
 
 class FileSystem {
     private:
         std::unique_ptr<std::fstream> m_Device;
         std::string m_DeviceName;
+        DeviceHeader m_DeviceHeader;
 
-        BlockMap m_BlockMap;
+        DeviceBlockMap m_DeviceBlockMap;
+
+
+        // constexpr static unsigned int MAX_OPEN_FILES = 4;
+        // std::array<std::optional<FileDescriptor>, MAX_OPEN_FILES> m_OpenFiles;
+
+
 
     public:
         bool process(Command command, std::vector<std::string>& arguments);
 
     private:
+
         bool mount(const std::string& deviceName);
         bool umount();
         bool filestat(unsigned int fd);
