@@ -18,7 +18,6 @@ std::vector<std::string> split(const std::string &s, char delim) {
 
 int main() {
     FileSystem fs;
-    std::fstream* device;
     std::string input;
     bool lastFailed = false;
     do {
@@ -34,6 +33,7 @@ int main() {
         Command command = toCommand(arguments[0]);
         if (command == Command::INVALID) {
             std::cout << "## Invalid command. Try again. " << std::endl;
+            lastFailed = true;
             continue;
         }
 

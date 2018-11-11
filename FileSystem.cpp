@@ -1,9 +1,47 @@
 #include "FileSystem.h"
 
 
-bool FileSystem::processMount(const std::string& deviceName) {
+Block::Block() {}
+Block::Block(std::array<char, SIZE> bytes) : bytes(bytes) {}
+Block::Block(char bytes[SIZE]) {
+    for (unsigned int i = 0; i < SIZE; i++) this->bytes[i] = bytes[i];
+}
+
+
+void writeBlock(std::fstream& device, unsigned int index, const Block& block) {
+    device.seekg(Block::SIZE * index);
+    device.write(block.asArray(), Block::SIZE);
+}
+
+void writeBlocks(std::fstream& device, unsigned int shift, const std::vector<Block>& blocks) {
+    device.seekg(Block::SIZE * shift);
+    device.write(reinterpret_cast<const char*>(blocks.data()), Block::SIZE * blocks.size());
+}
+
+Block readBlock(std::fstream& device, unsigned int index) {
+    char bytes[Block::SIZE];
+    device.seekg(Block::SIZE * index);
+    device.read(bytes, Block::SIZE);
+
+    return Block{bytes};
+}
+
+std::vector<Block> readBlocks(std::fstream& device, unsigned int shift, unsigned int amount) {
+    char bytes[Block::SIZE * amount];
+    device.seekg(Block::SIZE * shift);
+    device.read(bytes, Block::SIZE * amount);
+
+    std::vector<Block> blocks;
+    for (unsigned int i = 0; i < amount; i++) {
+        blocks.emplace_back(bytes + i * Block::SIZE);
+    }
+
+    return blocks;
+}
+
+bool FileSystem::mount(const std::string& deviceName) {
     if (m_Device) {
-        std::cout << "A device " << m_DeviceName << " is mounted. Unmount it first" << std::endl;
+        std::cout << "Device " << m_DeviceName << " is mounted. Unmount it first" << std::endl;
         return false;
     }
 
@@ -18,19 +56,16 @@ bool FileSystem::processMount(const std::string& deviceName) {
     m_DeviceName = deviceName;
 
     const unsigned int actualDeviceSize = m_Device->tellg(); // because was openned at the end
-    if (actualDeviceSize < sizeof(DevHeader)) {
-        std::cout << "Invalid header found. Recreating empty" << std::endl;
-        writeDefaultHeader();
+    if (actualDeviceSize <= Block::SIZE) {
+        std::cout << "Invalid header found. Cannot mount" << std::endl;
+        m_Device.release();
+        return false;
     }
-    DevHeader header;
-    m_Device->seekg(0);
-    m_Device->read(reinterpret_cast<char*>(&header), sizeof(DevHeader));
-    std::cout << header;
 
     return true;
 }
 
-bool FileSystem::processUmount() {
+bool FileSystem::umount() {
     if (!m_Device) {
         std::cout << "No device currently mounted" << std::endl;
         return false;
@@ -42,19 +77,60 @@ bool FileSystem::processUmount() {
     return true;
 }
 
-void FileSystem::writeDefaultHeader() {
-    if (!m_Device) {
-        std::cout << "Cannot write default header: no mounted device" << std::endl;
-        return;
-    }
-
-    static const unsigned int defaultBlockSize = 8;
-    static const unsigned int defaultMaxFiles = 10;
-
-    DevHeader emptyHeader {defaultBlockSize, defaultMaxFiles};
-    m_Device->seekg(0);
-    m_Device->write(reinterpret_cast<char*>(&emptyHeader), sizeof(DevHeader));
+bool FileSystem::filestat(unsigned int fd) {
+    return true;
 }
+
+bool FileSystem::ls() {
+    return true;
+}
+
+bool FileSystem::create(const std::string& name) {
+    return true;
+}
+
+bool FileSystem::open(const std::string& name, unsigned int& fd) {
+    return true;
+}
+
+bool FileSystem::close(unsigned int fd) {
+    return true;
+}
+
+bool FileSystem::read(unsigned int fd, unsigned int shift, unsigned int size, std::string& buff) {
+    return true;
+}
+
+bool FileSystem::write(unsigned int fd, unsigned int shift, unsigned int size, const std::string& buff) {
+    return true;
+}
+
+bool FileSystem::link(const std::string& name1, const std::string& name2) {
+    return true;
+}
+
+bool FileSystem::unlink(const std::string& name) {
+    return true;
+}
+
+bool FileSystem::truncate(const std::string& name, unsigned int size) {
+    return true;
+}
+
+
+/* void FileSystem::writeDefaultHeader() { */
+/*     if (!m_Device) { */
+/*         std::cout << "Cannot write default header: no mounted device" << std::endl; */
+/*         return; */
+/*     } */
+/*  */
+/*     static const unsigned int defaultBlockSize = 8; */
+/*     static const unsigned int defaultMaxFiles = 10; */
+/*  */
+/*     DevHeader emptyHeader {defaultBlockSize, defaultMaxFiles}; */
+/*     m_Device->seekg(0); */
+/*     m_Device->write(reinterpret_cast<char*>(&emptyHeader), sizeof(DevHeader)); */
+/* } */
 
 
 std::string toString(Command command) {
