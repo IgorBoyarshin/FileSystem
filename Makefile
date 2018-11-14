@@ -1,7 +1,7 @@
 # The name of the main file and executable
 mainFileName = fs
 # Files that have .h and .cpp versions
-classFiles = FileSystem
+classFiles = FileSystem Device Block
 # Files that only have the .h version
 justHeaderFiles =
 # Compilation flags
