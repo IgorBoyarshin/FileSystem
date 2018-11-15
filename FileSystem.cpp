@@ -36,6 +36,46 @@ std::optional<uint16_t> FileSystem::getFdOfFileWithName(
     return std::nullopt;
 }
 
+bool FileSystem::create(DeviceFileDescriptor& dir,
+                std::string name, uint16_t fdIndex) {
+    assert(dir.fileType == DeviceFileType::Directory);
+    if (const unsigned int lastIndex = 2 * dir.size;
+            lastIndex >= Device::FD_BLOCKS_PER_FILE) {
+        std::cout << "Maximum number of files for this dir reached" << std::endl;
+        return false;
+    }
+    const auto blockIndexForFileNameOpt = m_DeviceBlockMap.findFree();
+    if (!blockIndexForFileNameOpt) {
+        std::cout << "No empty data blocks left (to store file name), "
+            << "cannot create a new file" << std::endl;
+        return false;
+    }
+    if (name.size() > 8) {
+        std::cout << "File name is too long, will be trimmed" << std::endl;
+        name.erase(name.begin() + 8, name.end());
+    }
+
+    // Indices inside FD for file name and file descriptor index
+    const unsigned int fdIndexForFileName = std::distance(dir.blocks.begin(),
+            std::find(dir.blocks.begin(), dir.blocks.end(),
+                        DeviceFileDescriptor::FREE_BLOCK));
+    const unsigned int fdIndexForFileFd = fdIndexForFileName + 1;
+
+    // Store file name data block
+    m_Device->writeBlock(Device::DATA_START + *blockIndexForFileNameOpt, {name});
+    m_DeviceBlockMap.setTaken(*blockIndexForFileNameOpt);
+    m_DeviceBlockMap.write(*m_Device);
+
+    // Put entry into working dir
+    dir.blocks[fdIndexForFileName] = *blockIndexForFileNameOpt; // where name is stored
+    dir.blocks[fdIndexForFileFd] = fdIndex; // fd of file
+    dir.size++;
+    DeviceFileDescriptor::write(*m_Device, m_WorkingDirectory, dir);
+
+    return true;
+}
+
+
 
 bool FileSystem::mount(const std::string& deviceName) {
     if (m_Device) {
@@ -170,51 +210,25 @@ bool FileSystem::create(std::string path) {
         return false;
     }
 
+    // Find dir
     DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, getDirByPath(path));
-    assert(dir.fileType == DeviceFileType::Directory);
-    const unsigned int lastIndex = 2 * dir.size;
-    if (lastIndex >= Device::FD_BLOCKS_PER_FILE) {
-        std::cout << "Maximum number of files for this dir reached" << std::endl;
-        return false;
-    }
 
-    const auto blockForFileNameOpt = m_DeviceBlockMap.findFree();
-    if (!blockForFileNameOpt) {
-        std::cout << "No empty data blocks left, cannot create a new file" << std::endl;
-        return false;
-    }
-    const unsigned int fdForFileName = std::distance(dir.blocks.begin(),
-            std::find(dir.blocks.begin(), dir.blocks.end(),
-                        DeviceFileDescriptor::FREE_BLOCK));
-    const unsigned int fdForFileFd = fdForFileName + 1;
-    const auto emptyFdOpt = DeviceFileDescriptor::findFree(*m_Device);
-    if (!emptyFdOpt) {
+    // Find FD for future file
+    const auto freeFdOpt = DeviceFileDescriptor::findFree(*m_Device);
+    if (!freeFdOpt) {
         std::cout << "No empty FD left, cannot create a new file" << std::endl;
         return false;
     }
 
-    // Create file
-    // Write file name
-    std::string name = extractName(path);
-    if (name.size() > 8) {
-        std::cout << "File name is too long, will be trimmed" << std::endl;
-        name.erase(name.begin() + 8, name.end());
-    }
-    m_Device->writeBlock(Device::DATA_START + *blockForFileNameOpt, {name});
-    m_DeviceBlockMap.setTaken(*blockForFileNameOpt);
-    m_DeviceBlockMap.write(*m_Device);
-    // Write file FD
-    DeviceFileDescriptor fileFd(DeviceFileType::Regular, 0, 0,
+    // Create file inside found FD
+    const std::string name = extractName(path);
+    DeviceFileDescriptor fd(DeviceFileType::Regular, 0, 1,
             std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, DeviceFileDescriptor::FREE_BLOCK));
-    DeviceFileDescriptor::write(*m_Device, *emptyFdOpt, fileFd);
+    DeviceFileDescriptor::write(*m_Device, *freeFdOpt, fd);
 
-    std::cout << "Created new file with FD=" << *emptyFdOpt << std::endl;
-
-    // Put entry into working dir
-    dir.blocks[fdForFileName] = *blockForFileNameOpt; // where name is stored
-    dir.blocks[fdForFileFd] = *emptyFdOpt; // fd of file
-    dir.size++;
-    DeviceFileDescriptor::write(*m_Device, m_WorkingDirectory, dir);
+    const bool result = create(dir, name, *freeFdOpt);
+    if (!result) return false;
+    std::cout << "Created new file with FD=" << *freeFdOpt << std::endl;
 
     return true;
 }
@@ -346,6 +360,7 @@ bool FileSystem::write(unsigned int fd, unsigned int shift, const std::string& b
             dfd.blocks[blockIndex] = *freeOpt;
             addr = dfd.blocks[blockIndex];
             m_DeviceBlockMap.setTaken(*freeOpt);
+            m_DeviceBlockMap.write(*m_Device);
         }
         if (ptr + Device::BLOCK_SIZE <= shift) {
             ptr += Device::BLOCK_SIZE;
@@ -372,6 +387,26 @@ bool FileSystem::write(unsigned int fd, unsigned int shift, const std::string& b
 }
 
 bool FileSystem::link(const std::string& name1, const std::string& name2) {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+    DeviceFileDescriptor dir =
+        DeviceFileDescriptor::read(*m_Device, getDirByPath(name1));
+    const std::string fileName = extractName(name1);
+    const auto fdIndexOpt = getFdOfFileWithName(dir, fileName);
+    if (!fdIndexOpt) {
+        std::cout << "No file with name " << name1
+            << " exists, cannot create hard link" << std::endl;
+        return false;
+    }
+    auto fd = DeviceFileDescriptor::read(*m_Device, *fdIndexOpt);
+    fd.linksCount++;
+
+    const bool result = create(dir, name2, *fdIndexOpt);
+    if (!result) return false;
+    std::cout << "Creaing a hard link: " << name2 << "=>" << fileName << std::endl;
+
     return true;
 }
 

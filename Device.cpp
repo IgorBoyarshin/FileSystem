@@ -78,12 +78,12 @@ void Device::createEmpty(const std::string& name) {
     std::vector<DeviceFileDescriptor> fds;
     for (unsigned int i = 0; i < header.maxFiles; i++) {
         if (i == 1) {
-            fds.emplace_back(DeviceFileType::Regular, 0, 0,
+            fds.emplace_back(DeviceFileType::Regular, 0, 1,
                     std::vector<uint16_t>(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK));
         } else if (i == 2) {
             std::vector<uint16_t> addresses(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK);
             addresses[0] = 2;
-            fds.emplace_back(DeviceFileType::Regular, 3, 0, addresses);
+            fds.emplace_back(DeviceFileType::Regular, 3, 1, addresses);
             map.setTaken(2);
         } else if (i == 0) {
             std::vector<uint16_t> addresses(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK);
@@ -91,7 +91,7 @@ void Device::createEmpty(const std::string& name) {
             addresses[1] = 2; // fd
             addresses[2] = 4; // where name is
             addresses[3] = 1; // fd
-            fds.emplace_back(DeviceFileType::Directory, 2, 0, addresses);
+            fds.emplace_back(DeviceFileType::Directory, 2, 1, addresses);
             map.setTaken(3);
             map.setTaken(4);
         } else {
