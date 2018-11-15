@@ -69,28 +69,31 @@ void Device::createEmpty(const std::string& name) {
     header.blocksPerFile = 10;
     Device::BLOCK_SIZE = header.blockSize;
     Device::FD_BLOCKS_PER_FILE = header.blocksPerFile;
+    const unsigned int dataCapacityBlocks = 32;
 
     Device::MAP_START = 0 + ceil(sizeof(DeviceHeader), Device::BLOCK_SIZE);
-    DeviceBlockMap map;
-    map.m_BlocksUsageMap = {2, 0, 0, 0};
+    DeviceBlockMap map(dataCapacityBlocks);
 
     Device::FDS_START = Device::MAP_START + map.sizeBlocks();
     std::vector<DeviceFileDescriptor> fds;
     for (unsigned int i = 0; i < header.maxFiles; i++) {
         if (i == 1) {
             fds.emplace_back(DeviceFileType::Regular, 0, 0,
-                    std::vector<uint16_t>(header.blocksPerFile, Block::INVALID));
+                    std::vector<uint16_t>(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK));
         } else if (i == 2) {
-            std::vector<uint16_t> addresses(header.blocksPerFile, Block::INVALID);
+            std::vector<uint16_t> addresses(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK);
             addresses[0] = 2;
             fds.emplace_back(DeviceFileType::Regular, 3, 0, addresses);
+            map.setTaken(2);
         } else if (i == 0) {
-            std::vector<uint16_t> addresses(header.blocksPerFile, Block::INVALID);
+            std::vector<uint16_t> addresses(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK);
             addresses[0] = 3; // where name is
             addresses[1] = 2; // fd
             addresses[2] = 4; // where name is
             addresses[3] = 1; // fd
             fds.emplace_back(DeviceFileType::Directory, 2, 0, addresses);
+            map.setTaken(3);
+            map.setTaken(4);
         } else {
             fds.push_back({});
         }
@@ -100,11 +103,10 @@ void Device::createEmpty(const std::string& name) {
     Device::DATA_START = Device::FDS_START + fds.size() * DeviceFileDescriptor::sizeInBlocks();
     header.firstLogicalBlockShift = Device::DATA_START;
     std::vector<uint8_t> data;
-    const unsigned int dataCapacity =
-        map.m_BlocksUsageMap.size() * sizeof(uint8_t) * 8 * header.blockSize;
-    for (unsigned int i = 0; i < dataCapacity; i++) {
+    for (unsigned int i = 0; i < dataCapacityBlocks; i++) {
         data.push_back(0);
     }
+
     data[2 * header.blockSize + 0] = 66;
     data[2 * header.blockSize + 1] = 65;
     data[2 * header.blockSize + 2] = 67;
@@ -134,15 +136,36 @@ void Device::createEmpty(const std::string& name) {
 
 
 
-DeviceBlockMap::DeviceBlockMap() {}
-DeviceBlockMap::DeviceBlockMap(std::vector<uint8_t> map) : m_BlocksUsageMap(map) {}
+DeviceBlockMap::DeviceBlockMap(unsigned int size) : m_BlocksUsageMap(size / 8, 0xFF), size(size) {}
+DeviceBlockMap::DeviceBlockMap(const std::vector<uint8_t>& map, unsigned int size)
+        : m_BlocksUsageMap(map), size(size) {}
 
 bool DeviceBlockMap::operator[](unsigned int blockIndex) const {
-    if (blockIndex >= m_BlocksUsageMap.size())
+    return at(blockIndex);
+}
+
+void DeviceBlockMap::setFree(unsigned int blockIndex) {
+    if (blockIndex >= size)
         throw std::out_of_range("blockIndex >= map size");
-    const unsigned int byte = blockIndex / sizeof(uint8_t);
-    const unsigned int shift = blockIndex % sizeof(uint8_t);
-    return (m_BlocksUsageMap[byte] & (1 << shift)) == 0;
+    const unsigned int byte = blockIndex / 8;
+    const unsigned int shift = blockIndex % 8;
+    m_BlocksUsageMap[byte] |= (1 << shift);
+}
+
+void DeviceBlockMap::setTaken(unsigned int blockIndex) {
+    if (blockIndex >= size)
+        throw std::out_of_range("blockIndex >= map size");
+    const unsigned int byte = blockIndex / 8;
+    const unsigned int shift = blockIndex % 8;
+    m_BlocksUsageMap[byte] ^= (m_BlocksUsageMap[byte] & (1 << shift));
+}
+
+bool DeviceBlockMap::at(unsigned int blockIndex) const {
+    if (blockIndex >= size)
+        throw std::out_of_range("blockIndex >= map size");
+    const unsigned int byte = blockIndex / 8;
+    const unsigned int shift = blockIndex % 8;
+    return (m_BlocksUsageMap[byte] & (1 << shift)) == 1;
 }
 
 // The tail of the last stored block is unspecified
@@ -170,12 +193,14 @@ void DeviceBlockMap::add(uint8_t byte) {
 }
 
 
+const uint16_t DeviceFileDescriptor::FREE_BLOCK = 0xFFFF;
+
 DeviceFileDescriptor::DeviceFileDescriptor()
         : fileType(DeviceFileType::Empty), size(0), linksCount(0),
-        blocks(std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, Block::INVALID)) {}
+        blocks(std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, FREE_BLOCK)) {}
 
 DeviceFileDescriptor::DeviceFileDescriptor(DeviceFileType fileType, uint16_t size,
-        uint8_t linksCount, std::vector<uint16_t> blocks)
+        uint8_t linksCount, const std::vector<uint16_t>& blocks)
         : fileType(fileType), size(size), linksCount(linksCount), blocks(blocks) {}
 
 DeviceFileDescriptor::DeviceFileDescriptor(const std::vector<Block>& rawBlocks) {
@@ -197,6 +222,27 @@ DeviceFileDescriptor::DeviceFileDescriptor(const std::vector<Block>& rawBlocks) 
 DeviceFileDescriptor DeviceFileDescriptor::read(Device& device, unsigned int index) {
     const unsigned int fdSizeBlocks = DeviceFileDescriptor::sizeInBlocks();
     return DeviceFileDescriptor(device.readBlocks(Device::FDS_START + index * fdSizeBlocks, fdSizeBlocks));
+}
+
+void DeviceFileDescriptor::write(
+        Device& device, unsigned int index, const DeviceFileDescriptor& dfd) {
+    device.writeBlocks(Device::FDS_START + index * sizeInBlocks(), dfd.serialize());
+}
+
+std::optional<unsigned int> DeviceFileDescriptor::findFree(Device& device) {
+    unsigned int i = 0;
+    const unsigned int fdSizeBlocks = DeviceFileDescriptor::sizeInBlocks();
+    for (unsigned int blockIndex = Device::FDS_START; blockIndex < Device::DATA_START;
+            blockIndex += fdSizeBlocks) {
+        DeviceFileDescriptor fd = DeviceFileDescriptor::read(device, i);
+        if (fd.fileType == DeviceFileType::Empty) {
+            return {i};
+        }
+
+        i++;
+    }
+
+    return std::nullopt;
 }
 
 std::vector<Block> DeviceFileDescriptor::serialize() const {

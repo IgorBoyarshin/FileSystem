@@ -23,6 +23,7 @@ struct Block {
         Block();
         Block(const std::vector<uint8_t>& bytes);
         Block(uint8_t* bytes);
+        Block(const std::string& str);
 };
 
 

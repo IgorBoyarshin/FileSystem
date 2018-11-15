@@ -4,6 +4,8 @@
 #include "Block.h"
 #include <fstream>
 #include <iostream>
+#include <bitset>
+#include <optional>
 
 
 struct Device {
@@ -95,11 +97,15 @@ class DeviceBlockMap {
     // private:
     public:
         std::vector<uint8_t> m_BlocksUsageMap;
+        unsigned int size; // amount of significant bits
 
     // public:
         /* static unsigned int SIZE_IN_BLOCKS; */
         // Returns whether is free
         bool operator[](unsigned int blockIndex) const;
+        bool at(unsigned int blockIndex) const;
+        void setFree(unsigned int blockIndex);
+        void setTaken(unsigned int blockIndex);
 
         // The tail of the last block stored is unspecified
         std::vector<Block> serialize() const;
@@ -107,11 +113,19 @@ class DeviceBlockMap {
         void clear();
         void add(uint8_t byte);
         inline unsigned int sizeBlocks() const {
-            return ceil(m_BlocksUsageMap.size(), Device::BLOCK_SIZE);
+            const unsigned int bitsPerByte = 8;
+            return ceil(size, Device::BLOCK_SIZE * bitsPerByte); // 8 bits
         }
 
-        DeviceBlockMap();
-        DeviceBlockMap(std::vector<uint8_t> map);
+        inline unsigned int findFree() const {
+            for (unsigned int i = 0; i < size; i++) {
+                if (at(i)) return i;
+            }
+            return size; // past the end => invalid
+        }
+
+        DeviceBlockMap(unsigned int size);
+        DeviceBlockMap(const std::vector<uint8_t>& map, unsigned int size);
 };
 
 enum class DeviceFileType : uint8_t {
@@ -155,7 +169,7 @@ inline std::ostream& operator<<(std::ostream& stream, const DeviceFileType& dft)
 
 struct DeviceFileDescriptor {
     public:
-        /* static unsigned int BLOCKS_PER_FILE; */
+        static const uint16_t FREE_BLOCK;
 
         DeviceFileType fileType;
         uint16_t size; // in bytes
@@ -164,10 +178,12 @@ struct DeviceFileDescriptor {
 
         DeviceFileDescriptor();
         DeviceFileDescriptor(DeviceFileType fileType, uint16_t size,
-                uint8_t linksCount, std::vector<uint16_t> blocks);
+                uint8_t linksCount, const std::vector<uint16_t>& blocks);
         DeviceFileDescriptor(const std::vector<Block>& rawBlocks);
 
         static DeviceFileDescriptor read(Device& device, unsigned int index);
+        static void write(Device& device, unsigned int index, const DeviceFileDescriptor& dfd);
+        static std::optional<unsigned int> findFree(Device& device);
 
         std::vector<Block> serialize() const;
 

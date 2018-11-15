@@ -36,8 +36,8 @@ int main() {
     std::string input;
     bool lastFailed = false;
     do {
-        if (lastFailed) std::cout << "##";
         std::cout << std::endl;
+        if (lastFailed) std::cout << "##";
         std::cout << ">>>";
         std::getline(std::cin, input);
 

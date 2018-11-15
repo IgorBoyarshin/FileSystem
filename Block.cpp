@@ -23,6 +23,18 @@ Block::Block(uint8_t* bytes) {
         this->bytes.push_back(bytes[i]);
 }
 
+Block::Block(const std::string& str) : Block() {
+    unsigned int index = 0;
+    while (index < bytes.size() && index < str.size()) {
+        bytes[index] = str[index];
+        index++;
+    }
+    while (index < bytes.size()) {
+        bytes[index] = '\0';
+        index++;
+    }
+}
+
 uint8_t& Block::operator[](unsigned int index) {
     return bytes.at(index);
 }

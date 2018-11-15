@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <cstdint>
 #include <bitset>
+#include <algorithm>
 
 #include "Device.h"
 #include "Block.h"
@@ -53,7 +54,7 @@ class FileSystem {
         bool umount();
         bool filestat(unsigned int id);
         bool ls();
-        bool create(const std::string& name);
+        bool create(std::string name);
         bool open(const std::string& name, unsigned int& fd);
         bool close(unsigned int fd);
         bool read(unsigned int fd, unsigned int shift, unsigned int size, std::string& buff);
