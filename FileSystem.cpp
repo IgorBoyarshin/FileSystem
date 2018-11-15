@@ -24,6 +24,18 @@ std::string FileSystem::extractName(std::string path) {
     return path.substr(lastSlash + 1);
 }
 
+std::optional<uint16_t> FileSystem::getFdOfFileWithName(
+        const DeviceFileDescriptor& dir,
+        const std::string& name) {
+    for (unsigned int i = 0; i < dir.blocks.size(); i += 2) {
+        const uint16_t fileNamePtr = dir.blocks[i];
+        if (fileNamePtr == DeviceFileDescriptor::FREE_BLOCK) continue;
+        const std::string currName = m_Device->readBlock(Device::DATA_START + fileNamePtr).asString();
+        if (currName == name) return {dir.blocks[i + 1]};
+    }
+    return std::nullopt;
+}
+
 
 bool FileSystem::mount(const std::string& deviceName) {
     if (m_Device) {
@@ -224,21 +236,13 @@ bool FileSystem::open(const std::string& path, unsigned int& fd_out) {
     DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, getDirByPath(path));
     const std::string name = extractName(path);
 
-    const auto fileFdOpt = [&dir](Device& device, const std::string& name) -> std::optional<uint16_t> {
-        for (unsigned int i = 0; i < dir.blocks.size(); i += 2) {
-            const uint16_t fileNamePtr = dir.blocks[i];
-            if (fileNamePtr == DeviceFileDescriptor::FREE_BLOCK) continue;
-            const std::string currName = device.readBlock(Device::DATA_START + fileNamePtr).asString();
-            if (currName == name) return {dir.blocks[i + 1]};
-        }
-        return std::nullopt;
-    }(*m_Device, name);
+    const auto fileFdOpt = getFdOfFileWithName(dir, name);
     if (!fileFdOpt) {
         std::cout << "No file with this name exists" << std::endl;
         return false;
     }
     if (const auto i = std::find_if(m_OpenFiles.begin(), m_OpenFiles.end(),
-            [fileFd = *fileFdOpt](const std::optional<uint16_t>& o){ return *o == fileFd; });
+            [fileFd = *fileFdOpt](const std::optional<uint16_t>& o){ return o && *o == fileFd; });
                 i != m_OpenFiles.end()) {
         std::cout << "This file is already open with os_fd="
             << std::distance(m_OpenFiles.begin(), i) << std::endl;
@@ -252,6 +256,18 @@ bool FileSystem::open(const std::string& path, unsigned int& fd_out) {
 }
 
 bool FileSystem::close(unsigned int fd) {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+
+    if (!m_OpenFiles[fd]) {
+        std::cout << "No file with os_fd=" << fd << " currently openned" << std::endl;
+        return false;
+    }
+    m_OpenFiles[fd] = std::nullopt;
+    std::cout << "Closed file with os_fd=" << fd << std::endl;
+
     return true;
 }
 

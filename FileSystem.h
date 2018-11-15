@@ -51,6 +51,10 @@ class FileSystem {
         uint16_t getDirByPath(const std::string& path) const;
         static std::string extractName(std::string path);
 
+        std::optional<uint16_t> getFdOfFileWithName(
+                const DeviceFileDescriptor& dir,
+                const std::string& name);
+
     private:
 
         bool mount(const std::string& deviceName);

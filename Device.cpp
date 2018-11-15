@@ -41,11 +41,11 @@ std::vector<Block> Device::readBlocks(std::fstream& file, unsigned int shift, un
 }
 
 void Device::writeBlock(unsigned int index, const Block& block) {
-    return writeBlock(m_Device, index, block);
+    writeBlock(m_Device, index, block);
 }
 
 void Device::writeBlocks(unsigned int shift, const std::vector<Block>& blocks) {
-    return writeBlocks(m_Device, shift, blocks);
+    writeBlocks(m_Device, shift, blocks);
 }
 
 Block Device::readBlock(unsigned int index) {
