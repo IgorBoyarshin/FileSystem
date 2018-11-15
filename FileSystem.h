@@ -37,7 +37,7 @@ class FileSystem {
         DeviceBlockMap m_DeviceBlockMap;
 
         inline constexpr static unsigned int MAX_OPEN_FILES = 4;
-        std::vector<std::optional<DeviceFileDescriptor>> m_OpenFiles;
+        std::array<std::optional<uint16_t>, MAX_OPEN_FILES> m_OpenFiles;
 
         uint16_t m_WorkingDirectory; // descriptor index
 
@@ -48,14 +48,17 @@ class FileSystem {
 
         FileSystem();
 
+        uint16_t getDirByPath(const std::string& path) const;
+        static std::string extractName(std::string path);
+
     private:
 
         bool mount(const std::string& deviceName);
         bool umount();
         bool filestat(unsigned int id);
         bool ls();
-        bool create(std::string name);
-        bool open(const std::string& name, unsigned int& fd);
+        bool create(std::string path);
+        bool open(const std::string& path, unsigned int& fd_out);
         bool close(unsigned int fd);
         bool read(unsigned int fd, unsigned int shift, unsigned int size, std::string& buff);
         bool write(unsigned int fd, unsigned int shift, unsigned int size, const std::string& buff);

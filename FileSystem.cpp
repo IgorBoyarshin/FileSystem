@@ -3,11 +3,25 @@
 
 FileSystem::FileSystem()
         : m_DeviceBlockMap(0),
-        m_OpenFiles(std::vector<std::optional<DeviceFileDescriptor>>(MAX_OPEN_FILES, std::nullopt)),
-         m_WorkingDirectory(0) {}
+         m_WorkingDirectory(0) {
+    for (unsigned int i = 0; i < MAX_OPEN_FILES; i++) {
+        m_OpenFiles[i] = std::nullopt;
+    }
+}
 
 void FileSystem::createEmptyDevice(const std::string& name) {
     Device::createEmpty(name);
+}
+
+uint16_t FileSystem::getDirByPath(const std::string& path) const {
+    // TODO: parse path
+    return m_WorkingDirectory;
+}
+
+std::string FileSystem::extractName(std::string path) {
+    const auto lastSlash = path.find_last_of('/');
+    if (lastSlash >= path.size()) return path;
+    return path.substr(lastSlash + 1);
 }
 
 
@@ -138,13 +152,13 @@ bool FileSystem::ls() {
     return true;
 }
 
-bool FileSystem::create(std::string name) {
+bool FileSystem::create(std::string path) {
     if (!m_Device) {
         std::cout << "No device currently mounted" << std::endl;
         return false;
     }
 
-    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, m_WorkingDirectory);
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, getDirByPath(path));
     assert(dir.fileType == DeviceFileType::Directory);
     const unsigned int lastIndex = 2 * dir.size;
     if (lastIndex >= Device::FD_BLOCKS_PER_FILE) {
@@ -169,6 +183,7 @@ bool FileSystem::create(std::string name) {
 
     // Create file
     // Write file name
+    std::string name = extractName(path);
     if (name.size() > 8) {
         std::cout << "File name is too long, will be trimmed" << std::endl;
         name.erase(name.begin() + 8, name.end());
@@ -192,7 +207,47 @@ bool FileSystem::create(std::string name) {
     return true;
 }
 
-bool FileSystem::open(const std::string& name, unsigned int& fd) {
+bool FileSystem::open(const std::string& path, unsigned int& fd_out) {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+    const unsigned int freeOsFd = std::distance(m_OpenFiles.begin(),
+            std::find_if(m_OpenFiles.begin(), m_OpenFiles.end(),
+                [](const std::optional<uint16_t>& o){ return !o; }));
+    if (freeOsFd >= m_OpenFiles.size()) {
+        std::cout << "Cannot open file: max limit for OS file descriptors reached. "
+            << "Close some files first" << std::endl;
+        return false;
+    }
+
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, getDirByPath(path));
+    const std::string name = extractName(path);
+
+    const auto fileFdOpt = [&dir](Device& device, const std::string& name) -> std::optional<uint16_t> {
+        for (unsigned int i = 0; i < dir.blocks.size(); i += 2) {
+            const uint16_t fileNamePtr = dir.blocks[i];
+            if (fileNamePtr == DeviceFileDescriptor::FREE_BLOCK) continue;
+            const std::string currName = device.readBlock(Device::DATA_START + fileNamePtr).asString();
+            if (currName == name) return {dir.blocks[i + 1]};
+        }
+        return std::nullopt;
+    }(*m_Device, name);
+    if (!fileFdOpt) {
+        std::cout << "No file with this name exists" << std::endl;
+        return false;
+    }
+    if (const auto i = std::find_if(m_OpenFiles.begin(), m_OpenFiles.end(),
+            [fileFd = *fileFdOpt](const std::optional<uint16_t>& o){ return *o == fileFd; });
+                i != m_OpenFiles.end()) {
+        std::cout << "This file is already open with os_fd="
+            << std::distance(m_OpenFiles.begin(), i) << std::endl;
+        return false;
+    }
+    /* std::cout << "File descriptor of this file is " << *fileFdOpt << std::endl; */
+    m_OpenFiles[freeOsFd] = {*fileFdOpt};
+    fd_out = freeOsFd;
+
     return true;
 }
 
@@ -322,7 +377,9 @@ bool FileSystem::process(Command command, std::vector<std::string>& arguments) {
             {
                 unsigned int fd;
                 const bool result = open(arguments[0], fd);
-                std::cout << "Opened file " << arguments[0] << " with fd=" << fd << std::endl;
+                if (result)
+                    std::cout << "Opened file " << arguments[0]
+                        << " with os_fd=" << fd << std::endl;
                 return result;
             }
         case Command::Close:
