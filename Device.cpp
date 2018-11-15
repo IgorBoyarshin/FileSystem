@@ -165,7 +165,7 @@ bool DeviceBlockMap::at(unsigned int blockIndex) const {
         throw std::out_of_range("blockIndex >= map size");
     const unsigned int byte = blockIndex / 8;
     const unsigned int shift = blockIndex % 8;
-    return (m_BlocksUsageMap[byte] & (1 << shift)) == 1;
+    return (m_BlocksUsageMap[byte] & (1 << shift)) != 0;
 }
 
 // The tail of the last stored block is unspecified
@@ -190,6 +190,10 @@ void DeviceBlockMap::clear() {
 
 void DeviceBlockMap::add(uint8_t byte) {
     m_BlocksUsageMap.push_back(byte);
+}
+
+void DeviceBlockMap::write(Device& device) const {
+    device.writeBlocks(Device::MAP_START, serialize());
 }
 
 

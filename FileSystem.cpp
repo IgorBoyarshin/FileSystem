@@ -152,7 +152,11 @@ bool FileSystem::create(std::string name) {
         return false;
     }
 
-    const unsigned int blockForFileName = m_DeviceBlockMap.findFree();
+    const auto blockForFileNameOpt = m_DeviceBlockMap.findFree();
+    if (!blockForFileNameOpt) {
+        std::cout << "No empty data blocks left, cannot create a new file" << std::endl;
+        return false;
+    }
     const unsigned int fdForFileName = std::distance(dir.blocks.begin(),
             std::find(dir.blocks.begin(), dir.blocks.end(),
                         DeviceFileDescriptor::FREE_BLOCK));
@@ -163,15 +167,15 @@ bool FileSystem::create(std::string name) {
         return false;
     }
 
-
     // Create file
     // Write file name
     if (name.size() > 8) {
         std::cout << "File name is too long, will be trimmed" << std::endl;
         name.erase(name.begin() + 8, name.end());
     }
-    m_Device->writeBlock(Device::DATA_START + blockForFileName, {name});
-    m_DeviceBlockMap.setTaken(blockForFileName);
+    m_Device->writeBlock(Device::DATA_START + *blockForFileNameOpt, {name});
+    m_DeviceBlockMap.setTaken(*blockForFileNameOpt);
+    m_DeviceBlockMap.write(*m_Device);
     // Write file FD
     DeviceFileDescriptor fileFd(DeviceFileType::Regular, 0, 0,
             std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, DeviceFileDescriptor::FREE_BLOCK));
@@ -180,11 +184,7 @@ bool FileSystem::create(std::string name) {
     std::cout << "Created new file with FD=" << *emptyFdOpt << std::endl;
 
     // Put entry into working dir
-    /* std::cout << "Found" << std::endl; */
-    /* std::cout << "block=" << blockForFileName << std::endl; */
-    /* std::cout << "fdName=" << fdForFileName << std::endl; */
-    /* std::cout << "fdFd=" << fdForFileFd << std::endl; */
-    dir.blocks[fdForFileName] = blockForFileName; // where name is stored
+    dir.blocks[fdForFileName] = *blockForFileNameOpt; // where name is stored
     dir.blocks[fdForFileFd] = *emptyFdOpt; // fd of file
     dir.size++;
     DeviceFileDescriptor::write(*m_Device, m_WorkingDirectory, dir);

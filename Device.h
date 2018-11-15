@@ -110,6 +110,8 @@ class DeviceBlockMap {
         // The tail of the last block stored is unspecified
         std::vector<Block> serialize() const;
 
+        void write(Device& device) const;
+
         void clear();
         void add(uint8_t byte);
         inline unsigned int sizeBlocks() const {
@@ -117,11 +119,19 @@ class DeviceBlockMap {
             return ceil(size, Device::BLOCK_SIZE * bitsPerByte); // 8 bits
         }
 
-        inline unsigned int findFree() const {
-            for (unsigned int i = 0; i < size; i++) {
-                if (at(i)) return i;
+        inline void printState() {
+            std::cout << "Map size=" << size << std::endl;
+            for (uint8_t i : m_BlocksUsageMap) {
+                std::cout << std::bitset<8>(i) << " ";
             }
-            return size; // past the end => invalid
+            std::cout << std::endl;
+        }
+
+        inline std::optional<unsigned int> findFree() const {
+            for (unsigned int i = 0; i < size; i++) {
+                if (at(i)) return {i};
+            }
+            return std::nullopt; // past the end => invalid
         }
 
         DeviceBlockMap(unsigned int size);
