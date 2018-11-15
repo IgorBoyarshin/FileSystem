@@ -402,6 +402,7 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
     }
     auto fd = DeviceFileDescriptor::read(*m_Device, *fdIndexOpt);
     fd.linksCount++;
+    DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, fd);
 
     const bool result = create(dir, name2, *fdIndexOpt);
     if (!result) return false;
