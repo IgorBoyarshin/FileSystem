@@ -1,6 +1,10 @@
 #include "FileSystem.h"
 
 
+FileSystem::FileSystem()
+        : m_OpenFiles(std::vector<std::optional<DeviceFileDescriptor>>(MAX_OPEN_FILES, std::nullopt)),
+        m_WorkingDirectory(0) {}
+
 void FileSystem::createEmptyDevice(const std::string& name) {
     Device::createEmpty(name);
 }
@@ -222,14 +226,33 @@ bool FileSystem::filestat(unsigned int id) {
     DeviceFileDescriptor dfd = DeviceFileDescriptor::read(*m_Device, id);
     std::cout << dfd;
     if (dfd.size == 0) {
-        std::cout << "No Data" << std::endl;
-        return true;
+        if (dfd.fileType == DeviceFileType::Directory) {
+            std::cout << "No files" << std::endl;
+        } else {
+            std::cout << "No Data" << std::endl;
+        }
     }
 
     return true;
 }
 
 bool FileSystem::ls() {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, m_WorkingDirectory);
+    assert(dir.fileType == DeviceFileType::Directory);
+    assert(dir.size % 2 == 0);
+    for (unsigned int fileIndex = 0; fileIndex < dir.size; fileIndex++) {
+        const uint16_t nameBlock = dir.blocks[fileIndex * 2 + 0];
+        const uint16_t fd = dir.blocks[fileIndex * 2 + 1];
+        const std::string name = m_Device->readBlock(Device::DATA_START + nameBlock).asString();
+
+        std::cout << "-- " << name << " : fd=" << fd << std::endl;
+    }
+
     return true;
 }
 

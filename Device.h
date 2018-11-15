@@ -185,7 +185,9 @@ struct DeviceFileDescriptor {
 
 inline std::ostream& operator<<(std::ostream& stream, const DeviceFileDescriptor& dfd) {
     stream << "Filetype=" << dfd.fileType << std::endl;
-    stream << "Size=" << dfd.size << " bytes" << std::endl;
+    stream << "Size=" << dfd.size
+        << (dfd.fileType == DeviceFileType::Directory ? " files" : " bytes")
+        << std::endl;
     stream << "Hard links=" << static_cast<int>(dfd.linksCount) << std::endl;
     return stream;
 }

@@ -34,3 +34,13 @@ const uint8_t& Block::operator[](unsigned int index) const {
 const uint8_t* Block::asArray() const {
     return bytes.data();
 }
+
+std::string Block::asString() const {
+    std::string str;
+    for (unsigned int i = 0; i < bytes.size(); i++) {
+        if (bytes[i] == '\0') break;
+        str += bytes[i];
+    }
+
+    return str;
+}

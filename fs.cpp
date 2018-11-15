@@ -31,7 +31,6 @@ int main() {
     /* std::cout << std::bitset<16>(b) << std::endl; */
     /* file2.close(); */
 
-
     FileSystem fs;
     fs.createEmptyDevice("def3");
     std::string input;

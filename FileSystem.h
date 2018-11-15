@@ -15,16 +15,16 @@
 #include "Block.h"
 
 
-struct DirectoryEntry {
-    std::string fileName;
-    DeviceFileDescriptor fd;
-
-    DirectoryEntry(const std::string& fileName, const DeviceFileDescriptor& fd);
-};
-
-class Directory {
-    std::vector<DirectoryEntry> entries;
-};
+/* struct DirectoryEntry { */
+/*     std::string fileName; */
+/*     DeviceFileDescriptor fd; */
+/*  */
+/*     DirectoryEntry(const std::string& fileName, const DeviceFileDescriptor& fd); */
+/* }; */
+/*  */
+/* class Directory { */
+/*     std::vector<DirectoryEntry> entries; */
+/* }; */
 
 
 class FileSystem {
@@ -36,15 +36,16 @@ class FileSystem {
         DeviceBlockMap m_DeviceBlockMap;
 
         inline constexpr static unsigned int MAX_OPEN_FILES = 4;
-        std::array<std::optional<DeviceFileDescriptor>, MAX_OPEN_FILES> m_OpenFiles;
+        std::vector<std::optional<DeviceFileDescriptor>> m_OpenFiles;
 
-        Directory currentDirectory;
-
+        uint16_t m_WorkingDirectory; // descriptor index
 
     public:
         bool process(Command command, std::vector<std::string>& arguments);
 
         void createEmptyDevice(const std::string& name);
+
+        FileSystem();
 
     private:
 

@@ -84,6 +84,13 @@ void Device::createEmpty(const std::string& name) {
             std::vector<uint16_t> addresses(header.blocksPerFile, Block::INVALID);
             addresses[0] = 2;
             fds.emplace_back(DeviceFileType::Regular, 3, 0, addresses);
+        } else if (i == 0) {
+            std::vector<uint16_t> addresses(header.blocksPerFile, Block::INVALID);
+            addresses[0] = 3; // where name is
+            addresses[1] = 2; // fd
+            addresses[2] = 4; // where name is
+            addresses[3] = 1; // fd
+            fds.emplace_back(DeviceFileType::Directory, 2, 0, addresses);
         } else {
             fds.push_back({});
         }
@@ -101,6 +108,20 @@ void Device::createEmpty(const std::string& name) {
     data[2 * header.blockSize + 0] = 66;
     data[2 * header.blockSize + 1] = 65;
     data[2 * header.blockSize + 2] = 67;
+
+    data[3 * header.blockSize + 0] = 'f';
+    data[3 * header.blockSize + 1] = 'i';
+    data[3 * header.blockSize + 2] = 'l';
+    data[3 * header.blockSize + 3] = 'e';
+    data[3 * header.blockSize + 4] = '1';
+
+    data[4 * header.blockSize + 0] = 'f';
+    data[4 * header.blockSize + 1] = '_';
+    data[4 * header.blockSize + 2] = 'e';
+    data[4 * header.blockSize + 3] = 'm';
+    data[4 * header.blockSize + 4] = 'p';
+    data[4 * header.blockSize + 5] = 't';
+    data[4 * header.blockSize + 6] = 'y';
 
     file.write(reinterpret_cast<char*>(&header), 8);
     writeBlocks(file, MAP_START, map.serialize());
@@ -164,9 +185,11 @@ DeviceFileDescriptor::DeviceFileDescriptor(const std::vector<Block>& rawBlocks) 
     linksCount = rawBlocks[0][3];
     unsigned int shift = 4;
     for (const Block& block : rawBlocks) {
-        if (shift == Device::BLOCK_SIZE) shift = 0;
-        blocks.push_back(static_cast<uint16_t>(block[shift + 1] << 8) | block[shift]);
-        shift += 2;
+        while (shift < Device::BLOCK_SIZE) {
+            blocks.push_back(static_cast<uint16_t>(block[shift + 1]) << 8 | block[shift]);
+            shift += 2;
+        }
+        shift = 0;
     }
 
 }
