@@ -312,7 +312,6 @@ bool FileSystem::read(unsigned int fd, unsigned int shift, unsigned int size, st
 }
 
 bool FileSystem::write(unsigned int fd, unsigned int shift, const std::string& buff) {
-    // TODO: handle writing more than 1 buffer
     if (!m_Device) {
         std::cout << "No device currently mounted" << std::endl;
         return false;
@@ -320,6 +319,10 @@ bool FileSystem::write(unsigned int fd, unsigned int shift, const std::string& b
     if (!m_OpenFiles[fd]) {
         std::cout << "No file with os_fd=" << fd << " currently open" << std::endl;
         return false;
+    }
+    if (buff.size() == 0) {
+        std::cout << "Write 0 bytes" << std::endl;
+        return true;
     }
 
     DeviceFileDescriptor dfd = DeviceFileDescriptor::read(*m_Device, *m_OpenFiles[fd]);
@@ -332,7 +335,18 @@ bool FileSystem::write(unsigned int fd, unsigned int shift, const std::string& b
     unsigned int ptr = 0;
     unsigned int buffPtr = 0;
     bool finished = false;
-    for (uint16_t addr : dfd.blocks) {
+    for (unsigned int blockIndex = 0; blockIndex < dfd.blocks.size(); blockIndex++) {
+        unsigned int addr = dfd.blocks[blockIndex];
+        if (addr == DeviceFileDescriptor::FREE_BLOCK) {
+            const auto freeOpt = m_DeviceBlockMap.findFree();
+            if (!freeOpt) {
+                std::cout << "No free data blocks left, cannot write" << std::endl;
+                return false;
+            }
+            dfd.blocks[blockIndex] = *freeOpt;
+            addr = dfd.blocks[blockIndex];
+            m_DeviceBlockMap.setTaken(*freeOpt);
+        }
         if (ptr + Device::BLOCK_SIZE <= shift) {
             ptr += Device::BLOCK_SIZE;
             continue;
@@ -350,6 +364,7 @@ bool FileSystem::write(unsigned int fd, unsigned int shift, const std::string& b
         if (finished) break;
     }
 
+    std::cout << "Wrote " << buff.size() << " bytes" << std::endl;
     dfd.size += (shift + buff.size() > dfd.size) ? (shift + buff.size() - dfd.size) : 0;
     DeviceFileDescriptor::write(*m_Device, *m_OpenFiles[fd], dfd);
 

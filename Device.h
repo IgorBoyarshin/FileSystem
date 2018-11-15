@@ -127,12 +127,7 @@ class DeviceBlockMap {
             std::cout << std::endl;
         }
 
-        inline std::optional<unsigned int> findFree() const {
-            for (unsigned int i = 0; i < size; i++) {
-                if (at(i)) return {i};
-            }
-            return std::nullopt; // past the end => invalid
-        }
+        std::optional<unsigned int> findFree() const;
 
         DeviceBlockMap(unsigned int size);
         DeviceBlockMap(const std::vector<uint8_t>& map, unsigned int size);

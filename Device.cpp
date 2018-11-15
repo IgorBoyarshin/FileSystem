@@ -188,6 +188,13 @@ void DeviceBlockMap::clear() {
     m_BlocksUsageMap.clear();
 }
 
+std::optional<unsigned int> DeviceBlockMap::findFree() const {
+    for (unsigned int i = 0; i < size; i++) {
+        if (at(i)) return {i};
+    }
+    return std::nullopt; // past the end => invalid
+}
+
 void DeviceBlockMap::add(uint8_t byte) {
     m_BlocksUsageMap.push_back(byte);
 }
