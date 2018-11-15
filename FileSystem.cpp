@@ -305,14 +305,54 @@ bool FileSystem::read(unsigned int fd, unsigned int shift, unsigned int size, st
                 buff += data[i];
             readSize++;
         }
-        if (finished)
-            break;
+        if (finished) break;
     }
 
     return true;
 }
 
-bool FileSystem::write(unsigned int fd, unsigned int shift, unsigned int size, const std::string& buff) {
+bool FileSystem::write(unsigned int fd, unsigned int shift, const std::string& buff) {
+    // TODO: handle writing more than 1 buffer
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+    if (!m_OpenFiles[fd]) {
+        std::cout << "No file with os_fd=" << fd << " currently open" << std::endl;
+        return false;
+    }
+
+    DeviceFileDescriptor dfd = DeviceFileDescriptor::read(*m_Device, *m_OpenFiles[fd]);
+    assert(dfd.fileType == DeviceFileType::Regular);
+    if (shift > dfd.size) {
+        std::cout << "Shift is beyond the end of the file" << std::endl;
+        return false;
+    }
+
+    unsigned int ptr = 0;
+    unsigned int buffPtr = 0;
+    bool finished = false;
+    for (uint16_t addr : dfd.blocks) {
+        if (ptr + Device::BLOCK_SIZE <= shift) {
+            ptr += Device::BLOCK_SIZE;
+            continue;
+        }
+        Block data = m_Device->readBlock(Device::DATA_START + addr);
+        for (unsigned int i = 0; i < Device::BLOCK_SIZE; i++) {
+            if (ptr++ < shift) continue;
+            data[ptr - 1] = buff[buffPtr++]; // ptr was inced at the prev line
+            if (ptr == shift + buff.size()) {
+                finished = true;
+                break;
+            }
+        }
+        m_Device->writeBlock(Device::DATA_START + addr, data);
+        if (finished) break;
+    }
+
+    dfd.size += (shift + buff.size() > dfd.size) ? (shift + buff.size() - dfd.size) : 0;
+    DeviceFileDescriptor::write(*m_Device, *m_OpenFiles[fd], dfd);
+
     return true;
 }
 
@@ -447,15 +487,14 @@ bool FileSystem::process(Command command, std::vector<std::string>& arguments) {
                 return false;
             }
         case Command::Write:
-            if (arguments.size() != 4) {
-                std::cout << "Expecting 4 arguments: file descriptor, shift, size, string" << std::endl;
+            if (arguments.size() != 3) {
+                std::cout << "Expecting 3 arguments: file descriptor, shift, string" << std::endl;
                 return false;
             }
             try {
                 const unsigned int fd = std::stoi(arguments[0]);
                 const unsigned int shift = std::stoi(arguments[1]);
-                const unsigned int size = std::stoi(arguments[2]);
-                return write(fd, shift, size, arguments[4]);
+                return write(fd, shift, arguments[2]);
             } catch (std::exception& e) {
                 std::cout << "Expecting an int argument" << std::endl;
                 return false;

@@ -65,7 +65,7 @@ class FileSystem {
         bool open(const std::string& path, unsigned int& fd_out);
         bool close(unsigned int fd);
         bool read(unsigned int fd, unsigned int shift, unsigned int size, std::string& buff);
-        bool write(unsigned int fd, unsigned int shift, unsigned int size, const std::string& buff);
+        bool write(unsigned int fd, unsigned int shift, const std::string& buff);
         bool link(const std::string& name1, const std::string& name2);
         bool unlink(const std::string& name);
         bool truncate(const std::string& name, unsigned int size);
