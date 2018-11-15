@@ -272,23 +272,42 @@ bool FileSystem::close(unsigned int fd) {
 }
 
 bool FileSystem::read(unsigned int fd, unsigned int shift, unsigned int size, std::string& buff) {
-    /* if (!m_Device) { */
-    /*     std::cout << "No device currently mounted" << std::endl; */
-    /*     return false; */
-    /* } */
-    /*  */
-    /* std::cout << "Data:\""; */
-    /* unsigned int readSize = 0; */
-    /* for (uint16_t addr : dfd.blocks) { */
-    /*     if (addr == Block::INVALID) break; */
-    /*     Block data = m_Device->readBlock(Device::DATA_START + addr); */
-    /*     for (unsigned int i = 0; i < Device::BLOCK_SIZE; i++) { */
-    /*         if (readSize >= dfd.size) break; */
-    /*         std::cout << data[i]; */
-    /*         readSize++; */
-    /*     } */
-    /* } */
-    /* std::cout << "\"" << std::endl; */
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+    if (!m_OpenFiles[fd]) {
+        std::cout << "No file with os_fd=" << fd << " currently open" << std::endl;
+        return false;
+    }
+
+    DeviceFileDescriptor dfd = DeviceFileDescriptor::read(*m_Device, *m_OpenFiles[fd]);
+    assert(dfd.fileType == DeviceFileType::Regular);
+    const unsigned int farEnd = shift + size;
+    if (farEnd > dfd.size) {
+        std::cout << "Requested pointer is beyond the file" << std::endl;
+        return false;
+    }
+
+    buff.clear();
+    unsigned int readSize = 0;
+    bool finished = false;
+    for (uint16_t addr : dfd.blocks) {
+        if (addr == Block::INVALID) break;
+        const Block data = m_Device->readBlock(Device::DATA_START + addr);
+        for (unsigned int i = 0; i < Device::BLOCK_SIZE; i++) {
+            if (readSize == farEnd) {
+                finished = true;
+                break;
+            }
+            assert(readSize < dfd.size); // can't happen, checked earlier
+            if (shift <= readSize)
+                buff += data[i];
+            readSize++;
+        }
+        if (finished)
+            break;
+    }
 
     return true;
 }
@@ -420,7 +439,8 @@ bool FileSystem::process(Command command, std::vector<std::string>& arguments) {
                 const unsigned int size = std::stoi(arguments[2]);
                 std::string buff;
                 const bool result = read(fd, shift, size, buff);
-                std::cout << buff << std::endl;
+                if (result)
+                    std::cout << "Data:\"" << buff << "\"";
                 return result;
             } catch (std::exception& e) {
                 std::cout << "Expecting an int argument" << std::endl;
