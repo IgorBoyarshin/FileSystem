@@ -55,11 +55,10 @@ class FileSystem {
                 const DeviceFileDescriptor& dir,
                 const std::string& name);
 
-        bool create(DeviceFileDescriptor& dir,
+        bool create(uint16_t dirIndex, DeviceFileDescriptor& dir,
                 std::string name, uint16_t fdIndex);
 
     private:
-
         bool mount(const std::string& deviceName);
         bool umount();
         bool filestat(unsigned int id);

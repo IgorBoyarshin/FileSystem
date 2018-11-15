@@ -36,7 +36,7 @@ std::optional<uint16_t> FileSystem::getFdOfFileWithName(
     return std::nullopt;
 }
 
-bool FileSystem::create(DeviceFileDescriptor& dir,
+bool FileSystem::create(uint16_t dirIndex, DeviceFileDescriptor& dir,
                 std::string name, uint16_t fdIndex) {
     assert(dir.fileType == DeviceFileType::Directory);
     if (const unsigned int lastIndex = 2 * dir.size;
@@ -70,7 +70,7 @@ bool FileSystem::create(DeviceFileDescriptor& dir,
     dir.blocks[fdIndexForFileName] = *blockIndexForFileNameOpt; // where name is stored
     dir.blocks[fdIndexForFileFd] = fdIndex; // fd of file
     dir.size++;
-    DeviceFileDescriptor::write(*m_Device, m_WorkingDirectory, dir);
+    DeviceFileDescriptor::write(*m_Device, dirIndex, dir);
 
     return true;
 }
@@ -193,13 +193,19 @@ bool FileSystem::ls() {
 
     DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, m_WorkingDirectory);
     assert(dir.fileType == DeviceFileType::Directory);
-    for (unsigned int fileIndex = 0; fileIndex < dir.size; fileIndex++) {
+    for (unsigned int fileIndex = 0; fileIndex < Device::FD_BLOCKS_PER_FILE / 2; fileIndex++) {
         const uint16_t nameBlock = dir.blocks[fileIndex * 2 + 0];
         const uint16_t fd = dir.blocks[fileIndex * 2 + 1];
+        if (nameBlock == DeviceFileDescriptor::FREE_BLOCK) {
+            assert(fd == DeviceFileDescriptor::FREE_BLOCK);
+            continue;
+        }
         const std::string name = m_Device->readBlock(Device::DATA_START + nameBlock).asString();
 
         std::cout << "-- " << name << " : fd=" << fd << std::endl;
     }
+
+    m_DeviceBlockMap.printState();
 
     return true;
 }
@@ -211,7 +217,8 @@ bool FileSystem::create(std::string path) {
     }
 
     // Find dir
-    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, getDirByPath(path));
+    const uint16_t dirIndex = getDirByPath(path);
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, dirIndex);
 
     // Find FD for future file
     const auto freeFdOpt = DeviceFileDescriptor::findFree(*m_Device);
@@ -226,7 +233,7 @@ bool FileSystem::create(std::string path) {
             std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, DeviceFileDescriptor::FREE_BLOCK));
     DeviceFileDescriptor::write(*m_Device, *freeFdOpt, fd);
 
-    const bool result = create(dir, name, *freeFdOpt);
+    const bool result = create(dirIndex, dir, name, *freeFdOpt);
     if (!result) return false;
     std::cout << "Created new file with FD=" << *freeFdOpt << std::endl;
 
@@ -391,8 +398,9 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
         std::cout << "No device currently mounted" << std::endl;
         return false;
     }
+    const uint16_t dirIndex = getDirByPath(name1);
     DeviceFileDescriptor dir =
-        DeviceFileDescriptor::read(*m_Device, getDirByPath(name1));
+        DeviceFileDescriptor::read(*m_Device, dirIndex);
     const std::string fileName = extractName(name1);
     const auto fdIndexOpt = getFdOfFileWithName(dir, fileName);
     if (!fdIndexOpt) {
@@ -404,7 +412,7 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
     fd.linksCount++;
     DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, fd);
 
-    const bool result = create(dir, name2, *fdIndexOpt);
+    const bool result = create(dirIndex, dir, name2, *fdIndexOpt);
     if (!result) return false;
     std::cout << "Creaing a hard link: " << name2 << "=>" << fileName << std::endl;
 
@@ -412,6 +420,62 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
 }
 
 bool FileSystem::unlink(const std::string& name) {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+
+    const unsigned int dirIndex = getDirByPath(name);
+    DeviceFileDescriptor dir =
+        DeviceFileDescriptor::read(*m_Device, dirIndex);
+    const std::string fileName = extractName(name);
+    const auto fdIndexOpt = getFdOfFileWithName(dir, fileName);
+    if (!fdIndexOpt) {
+        std::cout << "No file with name " << name
+            << " exists, cannot unlink hard link" << std::endl;
+        return false;
+    }
+
+    // Remove link file (dir etry) from dir
+    for (unsigned int i = 0; i < dir.blocks.size(); i += 2) {
+        if (dir.blocks[i + 1] == *fdIndexOpt) {
+            const uint16_t fileNameBlockAddr = dir.blocks[i];
+            const std::string fileName =
+                m_Device->readBlock(Device::DATA_START + fileNameBlockAddr).asString();
+            if (fileName != name) {
+                // Found another hard link for this FD => keep looking
+                continue;
+            }
+            m_DeviceBlockMap.setFree(fileNameBlockAddr);
+            m_DeviceBlockMap.write(*m_Device);
+
+            dir.blocks[i] = DeviceFileDescriptor::FREE_BLOCK;
+            dir.blocks[i + 1] = DeviceFileDescriptor::FREE_BLOCK;
+            dir.size--;
+            DeviceFileDescriptor::write(*m_Device, dirIndex, dir);
+            break;
+        }
+    }
+
+    std::cout << "Successfully unlinked hard" << std::endl;
+
+    auto fd = DeviceFileDescriptor::read(*m_Device, *fdIndexOpt);
+    fd.linksCount--;
+    if (fd.linksCount == 0) {
+        // Need to remove FD as well
+        for (uint16_t addr : fd.blocks) {
+            if (addr != DeviceFileDescriptor::FREE_BLOCK) {
+                m_DeviceBlockMap.setFree(addr);
+            }
+        }
+        m_DeviceBlockMap.write(*m_Device);
+
+        DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, {});
+        std::cout << "Hard links count reached 0 => removed the FD as well" << std::endl;
+    }
+    DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, fd);
+
+
     return true;
 }
 
