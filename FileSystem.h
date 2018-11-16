@@ -11,21 +11,10 @@
 #include <cstdint>
 #include <bitset>
 #include <algorithm>
+#include <utility>
 
 #include "Device.h"
 #include "Block.h"
-
-
-/* struct DirectoryEntry { */
-/*     std::string fileName; */
-/*     DeviceFileDescriptor fd; */
-/*  */
-/*     DirectoryEntry(const std::string& fileName, const DeviceFileDescriptor& fd); */
-/* }; */
-/*  */
-/* class Directory { */
-/*     std::vector<DirectoryEntry> entries; */
-/* }; */
 
 
 enum class Command {
@@ -73,7 +62,8 @@ class FileSystem {
 
         FileSystem();
 
-        std::optional<uint16_t> getDirByPath(std::string path) const;
+        std::pair<std::optional<uint16_t>, std::string>
+            extractPath(std::string path) const;
         static std::string extractName(std::string path);
 
         std::optional<uint16_t> getFdOfFileWithName(
@@ -102,7 +92,7 @@ class FileSystem {
         bool truncate(const std::string& name, unsigned int size);
         bool mkdir(const std::string& name);
         bool rmdir(const std::string& name);
-        bool cd(const std::string& name);
+        bool cd(std::string path);
         bool pwd();
         bool symlink(std::string target, const std::string& linkName);
 };

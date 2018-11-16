@@ -18,19 +18,6 @@ std::vector<std::string> split(const std::string &s, char delim) {
 
 
 int main() {
-    /* std::fstream file("test", file.binary | file.out | file.in); */
-    /* unsigned short a = 5 << 8 | 7; */
-    /* file.write(reinterpret_cast<char*>(&a), 1); */
-    /* file.write(reinterpret_cast<char*>(&a) + 1, 1); */
-    /* file.close(); */
-    /*  */
-    /* std::fstream file2("test", file.binary | file.out | file.in); */
-    /* unsigned int b = 0; */
-    /* file2.read(reinterpret_cast<char*>(&b), 2); */
-    /* std::cout << std::bitset<16>(a) << std::endl; */
-    /* std::cout << std::bitset<16>(b) << std::endl; */
-    /* file2.close(); */
-
     FileSystem fs;
     fs.createEmptyDevice("def3");
     std::string input;

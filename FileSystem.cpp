@@ -13,38 +13,54 @@ void FileSystem::createEmptyDevice(const std::string& name) {
     Device::createEmpty(name);
 }
 
-std::optional<uint16_t> FileSystem::getDirByPath(std::string path) const {
+std::pair<std::optional<uint16_t>, std::string>
+        FileSystem::extractPath(std::string path) const {
     const bool absolutePath = path[0] == '/';
     uint16_t currDirIndex = (absolutePath) ? 0 : m_WorkingDirectory;
     DeviceFileDescriptor currDir = DeviceFileDescriptor::read(*m_Device, currDirIndex);
     if (absolutePath) path.erase(0, 1); // remove '/'
 
-    while (path.find_first_of('/') != std::string::npos) {
+    static const unsigned int MAX_SUBSEQUENT_RESOLUTIONS = 4;
+    unsigned int subsequentSymlinkResolutionCount = 0;
+    while (true) {
+    /* while (path.find_first_of('/') != std::string::npos || enterLast) { */
         const unsigned int sepIndex = path.find_first_of('/');
-        const std::string part = path.substr(0, sepIndex);
+        const std::string part = path.substr(0, sepIndex); // coult be till the end
         std::cout << "part=" << part << std::endl;
         path.erase(0, sepIndex); // leave '/' for now
         const auto fdIndexOpt = getFdOfFileWithName(currDir, part);
+        const bool atLast = path.find_first_of('/') == std::string::npos;
         if (!fdIndexOpt) {
-            std::cout << "Invalid path entry: " << part << std::endl;
-            return std::nullopt;
+            if (atLast) {
+                return {{currDirIndex}, part};
+            } else {
+                std::cout << "Invalid path entry: " << part << std::endl;
+                return {std::nullopt, ""};
+            }
         }
         const DeviceFileDescriptor fd = DeviceFileDescriptor::read(*m_Device, *fdIndexOpt);
         if (fd.fileType == DeviceFileType::Symlink) {
+            if (subsequentSymlinkResolutionCount++ > MAX_SUBSEQUENT_RESOLUTIONS) {
+                std::cout << "Reached limit of symlink resolution" << std::endl;
+                return {std::nullopt, ""};
+            }
             const std::string resolvedName = resolveSymlink(fd);
             path = resolvedName + path;
             continue;
         } else if (fd.fileType == DeviceFileType::Directory) {
+            if (atLast) {
+                return {{currDirIndex}, part};
+            }
             currDirIndex = *fdIndexOpt;
             currDir = fd;
+        } else if (fd.fileType == DeviceFileType::Regular) {
+            return {{currDirIndex}, part};
         } else {
             assert(false);
         }
 
         path.erase(0, 1); // remove '/'
     }
-
-    return currDirIndex;
 }
 
 std::string FileSystem::extractName(std::string path) {
@@ -270,12 +286,13 @@ bool FileSystem::create(std::string path) {
     }
 
     // Find dir
-    const auto dirIndexOpt = getDirByPath(path);
-    if (!dirIndexOpt) {
+    const auto dir_fdName = extractPath(path);
+    if (!dir_fdName.first) {
         std::cout << "Invalid path, cannot create file" << std::endl;
         return false;
     }
-    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *dirIndexOpt);
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *dir_fdName.first);
+    const std::string name = dir_fdName.second;
 
     // Find FD for future file
     const auto freeFdOpt = DeviceFileDescriptor::findFree(*m_Device);
@@ -285,12 +302,12 @@ bool FileSystem::create(std::string path) {
     }
 
     // Create file inside found FD
-    const std::string name = extractName(path);
+    /* const std::string name = extractName(path); */
     DeviceFileDescriptor fd(DeviceFileType::Regular, 0, 1,
             std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, DeviceFileDescriptor::FREE_BLOCK));
     DeviceFileDescriptor::write(*m_Device, *freeFdOpt, fd);
 
-    const bool result = create(*dirIndexOpt, dir, name, *freeFdOpt);
+    const bool result = create(*dir_fdName.first, dir, name, *freeFdOpt);
     if (!result) return false;
     std::cout << "Created new file with FD=" << *freeFdOpt << std::endl;
 
@@ -311,8 +328,13 @@ bool FileSystem::open(const std::string& path, unsigned int& fd_out) {
         return false;
     }
 
-    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *getDirByPath(path));
-    const std::string name = extractName(path);
+    const auto dir_fdName = extractPath(path);
+    if (!dir_fdName.first) {
+        std::cout << "Invalid path, cannot create file" << std::endl;
+        return false;
+    }
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *dir_fdName.first);
+    const std::string name = dir_fdName.second;
 
     const auto fileFdOpt = getFdOfFileWithName(dir, name);
     if (!fileFdOpt) {
@@ -455,14 +477,15 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
         std::cout << "No device currently mounted" << std::endl;
         return false;
     }
-    const auto dirIndexOpt = getDirByPath(name1);
-    if (!dirIndexOpt) {
-        std::cout << "Cannot create hard link: invalid target path" << std::endl;
+
+    const auto dir_fdName = extractPath(name1);
+    if (!dir_fdName.first) {
+        std::cout << "Invalid path, cannot create file" << std::endl;
         return false;
     }
-    DeviceFileDescriptor dir =
-        DeviceFileDescriptor::read(*m_Device, *dirIndexOpt);
-    const std::string fileName = extractName(name1);
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *dir_fdName.first);
+    const std::string fileName = dir_fdName.second;
+
     const auto fdIndexOpt = getFdOfFileWithName(dir, fileName);
     if (!fdIndexOpt) {
         std::cout << "No file with name " << name1
@@ -473,7 +496,7 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
     fd.linksCount++;
     DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, fd);
 
-    const bool result = create(*dirIndexOpt, dir, name2, *fdIndexOpt);
+    const bool result = create(*dir_fdName.first, dir, name2, *fdIndexOpt);
     if (!result) return false;
     std::cout << "Creaing a hard link: " << name2 << "=>" << fileName << std::endl;
 
@@ -486,14 +509,14 @@ bool FileSystem::unlink(const std::string& name) {
         return false;
     }
 
-    const auto dirIndexOpt = getDirByPath(name);
-    if (!dirIndexOpt) {
-        std::cout << "Cannot unlink: invalid path" << std::endl;
+    const auto dir_fdName = extractPath(name);
+    if (!dir_fdName.first) {
+        std::cout << "Invalid path, cannot create file" << std::endl;
         return false;
     }
-    DeviceFileDescriptor dir =
-        DeviceFileDescriptor::read(*m_Device, *dirIndexOpt);
-    const std::string fileName = extractName(name);
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *dir_fdName.first);
+    const std::string fileName = dir_fdName.second;
+
     const auto fdIndexOpt = getFdOfFileWithName(dir, fileName);
     if (!fdIndexOpt) {
         std::cout << "No file with name " << name
@@ -517,7 +540,7 @@ bool FileSystem::unlink(const std::string& name) {
             dir.blocks[i] = DeviceFileDescriptor::FREE_BLOCK;
             dir.blocks[i + 1] = DeviceFileDescriptor::FREE_BLOCK;
             dir.size--;
-            DeviceFileDescriptor::write(*m_Device, *dirIndexOpt, dir);
+            DeviceFileDescriptor::write(*m_Device, *dir_fdName.first, dir);
             break;
         }
     }
@@ -542,12 +565,14 @@ bool FileSystem::mkdir(const std::string& name) {
         std::cout << "No device currently mounted" << std::endl;
         return false;
     }
-    const auto parentIndexOpt = getDirByPath(name);
-    if (!parentIndexOpt) {
-        std::cout << "Invalid path, cannot create dir" << std::endl;
+
+    const auto dir_fdName = extractPath(name);
+    if (!dir_fdName.first) {
+        std::cout << "Invalid path, cannot create file" << std::endl;
         return false;
     }
-    DeviceFileDescriptor parent = DeviceFileDescriptor::read(*m_Device, *parentIndexOpt);
+    DeviceFileDescriptor parent = DeviceFileDescriptor::read(*m_Device, *dir_fdName.first);
+    const std::string fileName = dir_fdName.second;
 
     // Find FD for future file
     const auto freeFdOpt = DeviceFileDescriptor::findFree(*m_Device);
@@ -568,7 +593,7 @@ bool FileSystem::mkdir(const std::string& name) {
     m_DeviceBlockMap.write(*m_Device);
     m_Device->writeBlock(Device::DATA_START + *link1FileNameAddrOpt, {".."});
     fd.blocks[0] = *link1FileNameAddrOpt;
-    fd.blocks[1] = *parentIndexOpt;
+    fd.blocks[1] = *dir_fdName.first;
 
     // Self link
     const auto link2FileNameAddrOpt = m_DeviceBlockMap.findFree();
@@ -581,7 +606,7 @@ bool FileSystem::mkdir(const std::string& name) {
 
     DeviceFileDescriptor::write(*m_Device, *freeFdOpt, fd);
 
-    const bool result = create(*parentIndexOpt, parent, dirName, *freeFdOpt);
+    const bool result = create(*dir_fdName.first, parent, dirName, *freeFdOpt);
     if (!result) return false;
     std::cout << "Created new directory with FD=" << *freeFdOpt << std::endl;
 
@@ -594,14 +619,14 @@ bool FileSystem::rmdir(const std::string& name) {
         return false;
     }
 
-    const auto parentIndexOpt = getDirByPath(name);
-    if (!parentIndexOpt) {
-        std::cout << "Invalid path, cannot create dir" << std::endl;
+    const auto dir_fdName = extractPath(name);
+    if (!dir_fdName.first) {
+        std::cout << "Invalid path" << std::endl;
         return false;
     }
-    DeviceFileDescriptor parent = DeviceFileDescriptor::read(*m_Device, *parentIndexOpt);
-    const std::string dirName = extractName(name);
-    auto dirIndexOpt = getFdOfFileWithName(parent, dirName);
+    DeviceFileDescriptor parent = DeviceFileDescriptor::read(*m_Device, *dir_fdName.first);
+    const std::string fileName = dir_fdName.second;
+    auto dirIndexOpt = getFdOfFileWithName(parent, dir_fdName.second);
     if (!dirIndexOpt) {
         std::cout << "No directory with specified name exists" << std::endl;
         return false;
@@ -618,7 +643,7 @@ bool FileSystem::rmdir(const std::string& name) {
         if (addr == DeviceFileDescriptor::FREE_BLOCK) continue;
         const std::string childName =
             m_Device->readBlock(Device::DATA_START + addr).asString();
-        if (childName == dirName) {
+        if (childName == dir_fdName.second) {
             // Free mem for child name
             m_DeviceBlockMap.setFree(addr);
             m_DeviceBlockMap.write(*m_Device);
@@ -626,7 +651,7 @@ bool FileSystem::rmdir(const std::string& name) {
             parent.blocks[i] = DeviceFileDescriptor::FREE_BLOCK;
             parent.blocks[i + 1] = DeviceFileDescriptor::FREE_BLOCK;
             parent.size--;
-            DeviceFileDescriptor::write(*m_Device, *parentIndexOpt, parent);
+            DeviceFileDescriptor::write(*m_Device, *dir_fdName.first, parent);
             break;
         }
     }
@@ -634,16 +659,33 @@ bool FileSystem::rmdir(const std::string& name) {
     // Clear dir contents (release memory for links)
     remove(dir, *dirIndexOpt);
 
-    std::cout << "Successfully removed dir " << dirName << std::endl;
+    std::cout << "Successfully removed dir " << dir_fdName.second << std::endl;
 
     return true;
 }
 
-bool FileSystem::cd(const std::string& name) {
-    return true;
-}
+bool FileSystem::cd(std::string path) {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
 
-bool FileSystem::pwd() {
+    const auto dir_fdName = extractPath(path);
+    if (!dir_fdName.first) {
+        std::cout << "Invalid path" << std::endl;
+        return false;
+    }
+    DeviceFileDescriptor parent = DeviceFileDescriptor::read(*m_Device, *dir_fdName.first);
+    const std::string name = dir_fdName.second;
+    auto childOpt = getFdOfFileWithName(parent, name);
+    if (!childOpt) {
+        std::cout << "Invalid path entry: " << name << std::endl;
+        return false;
+    }
+    m_WorkingDirectory = *childOpt;
+    std::cout << "Changed working directory to " << name
+        << " (FD=" << *childOpt << ")" << std::endl;
+
     return true;
 }
 
@@ -688,6 +730,10 @@ bool FileSystem::symlink(std::string target, const std::string& linkName) {
     return true;
 }
 
+bool FileSystem::pwd() {
+    std::cout << "Working director FD=" << m_WorkingDirectory << std::endl;
+    return true;
+}
 
 
 std::string toString(Command command) {
