@@ -85,6 +85,8 @@ class FileSystem {
 
         std::string resolveSymlink(const DeviceFileDescriptor& fd) const;
 
+        bool remove(const DeviceFileDescriptor& fd, uint16_t fdIndex);
+
     private:
         bool mount(const std::string& deviceName);
         bool umount();

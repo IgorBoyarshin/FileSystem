@@ -22,6 +22,7 @@ std::optional<uint16_t> FileSystem::getDirByPath(std::string path) const {
     while (path.find_first_of('/') != std::string::npos) {
         const unsigned int sepIndex = path.find_first_of('/');
         const std::string part = path.substr(0, sepIndex);
+        std::cout << "part=" << part << std::endl;
         path.erase(0, sepIndex); // leave '/' for now
         const auto fdIndexOpt = getFdOfFileWithName(currDir, part);
         if (!fdIndexOpt) {
@@ -73,6 +74,19 @@ std::string FileSystem::resolveSymlink(const DeviceFileDescriptor& fd) const {
     }
 
     return result;
+}
+
+bool FileSystem::remove(const DeviceFileDescriptor& fd, uint16_t fdIndex) {
+    for (uint16_t addr : fd.blocks) {
+        if (addr != DeviceFileDescriptor::FREE_BLOCK) {
+            m_DeviceBlockMap.setFree(addr);
+        }
+    }
+    m_DeviceBlockMap.write(*m_Device);
+
+    DeviceFileDescriptor::write(*m_Device, fdIndex, {});
+
+    return true;
 }
 
 bool FileSystem::create(uint16_t dirIndex, DeviceFileDescriptor& dir,
@@ -514,14 +528,7 @@ bool FileSystem::unlink(const std::string& name) {
     fd.linksCount--;
     if (fd.linksCount == 0) {
         // Need to remove FD as well
-        for (uint16_t addr : fd.blocks) {
-            if (addr != DeviceFileDescriptor::FREE_BLOCK) {
-                m_DeviceBlockMap.setFree(addr);
-            }
-        }
-        m_DeviceBlockMap.write(*m_Device);
-
-        DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, {});
+        remove(fd, *fdIndexOpt);
         std::cout << "Hard links count reached 0 => removed the FD as well" << std::endl;
     }
     DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, fd);
@@ -531,10 +538,104 @@ bool FileSystem::unlink(const std::string& name) {
 }
 
 bool FileSystem::mkdir(const std::string& name) {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+    const auto parentIndexOpt = getDirByPath(name);
+    if (!parentIndexOpt) {
+        std::cout << "Invalid path, cannot create dir" << std::endl;
+        return false;
+    }
+    DeviceFileDescriptor parent = DeviceFileDescriptor::read(*m_Device, *parentIndexOpt);
+
+    // Find FD for future file
+    const auto freeFdOpt = DeviceFileDescriptor::findFree(*m_Device);
+    if (!freeFdOpt) {
+        std::cout << "No empty FD left, cannot create a new directory here" << std::endl;
+        return false;
+    }
+
+    // Create file inside found FD
+    const std::string dirName = extractName(name);
+    DeviceFileDescriptor fd(DeviceFileType::Directory, 2, 2,
+            std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, DeviceFileDescriptor::FREE_BLOCK));
+
+    // Parent link
+    const auto link1FileNameAddrOpt = m_DeviceBlockMap.findFree();
+    assert(link1FileNameAddrOpt); // TODO: handle no mem left
+    m_DeviceBlockMap.setTaken(*link1FileNameAddrOpt);
+    m_DeviceBlockMap.write(*m_Device);
+    m_Device->writeBlock(Device::DATA_START + *link1FileNameAddrOpt, {".."});
+    fd.blocks[0] = *link1FileNameAddrOpt;
+    fd.blocks[1] = *parentIndexOpt;
+
+    // Self link
+    const auto link2FileNameAddrOpt = m_DeviceBlockMap.findFree();
+    assert(link2FileNameAddrOpt); // TODO: handle no mem left
+    m_DeviceBlockMap.setTaken(*link2FileNameAddrOpt);
+    m_DeviceBlockMap.write(*m_Device);
+    m_Device->writeBlock(Device::DATA_START + *link2FileNameAddrOpt, {"."});
+    fd.blocks[2] = *link2FileNameAddrOpt;
+    fd.blocks[3] = *freeFdOpt;
+
+    DeviceFileDescriptor::write(*m_Device, *freeFdOpt, fd);
+
+    const bool result = create(*parentIndexOpt, parent, dirName, *freeFdOpt);
+    if (!result) return false;
+    std::cout << "Created new directory with FD=" << *freeFdOpt << std::endl;
+
     return true;
 }
 
 bool FileSystem::rmdir(const std::string& name) {
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+
+    const auto parentIndexOpt = getDirByPath(name);
+    if (!parentIndexOpt) {
+        std::cout << "Invalid path, cannot create dir" << std::endl;
+        return false;
+    }
+    DeviceFileDescriptor parent = DeviceFileDescriptor::read(*m_Device, *parentIndexOpt);
+    const std::string dirName = extractName(name);
+    auto dirIndexOpt = getFdOfFileWithName(parent, dirName);
+    if (!dirIndexOpt) {
+        std::cout << "No directory with specified name exists" << std::endl;
+        return false;
+    }
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *dirIndexOpt);
+    if (dir.size > 2) { // more than two mandatory links
+        std::cout << "Directory must be empty in order to be able to remove it" << std::endl;
+        return false;
+    }
+
+    // Remove from parent
+    for (unsigned int i = 0; i < Device::FD_BLOCKS_PER_FILE; i += 2) {
+        const uint16_t addr = parent.blocks[i];
+        if (addr == DeviceFileDescriptor::FREE_BLOCK) continue;
+        const std::string childName =
+            m_Device->readBlock(Device::DATA_START + addr).asString();
+        if (childName == dirName) {
+            // Free mem for child name
+            m_DeviceBlockMap.setFree(addr);
+            m_DeviceBlockMap.write(*m_Device);
+
+            parent.blocks[i] = DeviceFileDescriptor::FREE_BLOCK;
+            parent.blocks[i + 1] = DeviceFileDescriptor::FREE_BLOCK;
+            parent.size--;
+            DeviceFileDescriptor::write(*m_Device, *parentIndexOpt, parent);
+            break;
+        }
+    }
+
+    // Clear dir contents (release memory for links)
+    remove(dir, *dirIndexOpt);
+
+    std::cout << "Successfully removed dir " << dirName << std::endl;
+
     return true;
 }
 

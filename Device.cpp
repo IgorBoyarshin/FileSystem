@@ -77,10 +77,7 @@ void Device::createEmpty(const std::string& name) {
     Device::FDS_START = Device::MAP_START + map.sizeBlocks();
     std::vector<DeviceFileDescriptor> fds;
     for (unsigned int i = 0; i < header.maxFiles; i++) {
-        if (i == 1) {
-            fds.emplace_back(DeviceFileType::Regular, 0, 1,
-                    std::vector<uint16_t>(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK));
-        } else if (i == 2) {
+        if (i == 2) {
             std::vector<uint16_t> addresses(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK);
             addresses[0] = 2;
             fds.emplace_back(DeviceFileType::Regular, 3, 1, addresses);
@@ -93,11 +90,8 @@ void Device::createEmpty(const std::string& name) {
             addresses[3] = 0; // fd
             addresses[4] = 3; // where name is
             addresses[5] = 2; // fd
-            addresses[6] = 4; // where name is
-            addresses[7] = 1; // fd
             fds.emplace_back(DeviceFileType::Directory, 3, 2, addresses);
             map.setTaken(3);
-            map.setTaken(4);
             map.setTaken(5);
             map.setTaken(6);
         } else {
@@ -122,14 +116,6 @@ void Device::createEmpty(const std::string& name) {
     data[3 * header.blockSize + 2] = 'l';
     data[3 * header.blockSize + 3] = 'e';
     data[3 * header.blockSize + 4] = '1';
-
-    data[4 * header.blockSize + 0] = 'f';
-    data[4 * header.blockSize + 1] = '_';
-    data[4 * header.blockSize + 2] = 'e';
-    data[4 * header.blockSize + 3] = 'm';
-    data[4 * header.blockSize + 4] = 'p';
-    data[4 * header.blockSize + 5] = 't';
-    data[4 * header.blockSize + 6] = 'y';
 
     data[5 * header.blockSize + 0] = '.';
 
