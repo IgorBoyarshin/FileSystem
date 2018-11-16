@@ -104,7 +104,7 @@ class FileSystem {
         bool rmdir(const std::string& name);
         bool cd(const std::string& name);
         bool pwd();
-        bool symlink(const std::string& target, const std::string linkName);
+        bool symlink(std::string target, const std::string& linkName);
 };
 
 

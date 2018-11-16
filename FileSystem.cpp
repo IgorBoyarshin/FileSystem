@@ -360,7 +360,7 @@ bool FileSystem::read(unsigned int fd, unsigned int shift, unsigned int size, st
     }
 
     DeviceFileDescriptor dfd = DeviceFileDescriptor::read(*m_Device, *m_OpenFiles[fd]);
-    assert(dfd.fileType == DeviceFileType::Regular);
+    assert(dfd.fileType == DeviceFileType::Regular || dfd.fileType == DeviceFileType::Symlink);
     const unsigned int farEnd = shift + size;
     if (farEnd > dfd.size) {
         std::cout << "Requested pointer is beyond the file" << std::endl;
@@ -647,7 +647,44 @@ bool FileSystem::pwd() {
     return true;
 }
 
-bool FileSystem::symlink(const std::string& target, const std::string linkName) {
+bool FileSystem::symlink(std::string target, const std::string& linkName) {
+    const std::string targetCopy = target;
+    if (!m_Device) {
+        std::cout << "No device currently mounted" << std::endl;
+        return false;
+    }
+
+    // Always inside working dir
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, m_WorkingDirectory);
+
+    // Find FD for future file
+    const auto freeFdOpt = DeviceFileDescriptor::findFree(*m_Device);
+    if (!freeFdOpt) {
+        std::cout << "No empty FD left, cannot create a new file" << std::endl;
+        return false;
+    }
+
+    // Create file inside found FD
+    DeviceFileDescriptor fd(DeviceFileType::Symlink, target.size(), 1,
+            std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, DeviceFileDescriptor::FREE_BLOCK));
+    unsigned int counter = 0;
+    while (target.size() > 0) {
+        const bool toEnd = target.size() <= Device::BLOCK_SIZE;
+        const Block data{target.substr(0, toEnd ? target.size() : Device::BLOCK_SIZE)};
+        auto freeIndexOpt = m_DeviceBlockMap.findFree();
+        assert(freeIndexOpt); // TODO
+        m_Device->writeBlock(Device::DATA_START + *freeIndexOpt, data);
+        m_DeviceBlockMap.setTaken(*freeIndexOpt);
+        m_DeviceBlockMap.write(*m_Device);
+        fd.blocks[counter++] = *freeIndexOpt;
+        target.erase(0, Device::BLOCK_SIZE);
+    }
+    DeviceFileDescriptor::write(*m_Device, *freeFdOpt, fd);
+
+    const bool result = create(m_WorkingDirectory, dir, linkName, *freeFdOpt);
+    if (!result) return false;
+    std::cout << "Created new symlink " << linkName << " => " << targetCopy << std::endl;
+
     return true;
 }
 
