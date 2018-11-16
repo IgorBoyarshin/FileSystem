@@ -13,9 +13,37 @@ void FileSystem::createEmptyDevice(const std::string& name) {
     Device::createEmpty(name);
 }
 
-uint16_t FileSystem::getDirByPath(const std::string& path) const {
-    // TODO: parse path
-    return m_WorkingDirectory;
+std::optional<uint16_t> FileSystem::getDirByPath(std::string path) const {
+    const bool absolutePath = path[0] == '/';
+    uint16_t currDirIndex = (absolutePath) ? 0 : m_WorkingDirectory;
+    DeviceFileDescriptor currDir = DeviceFileDescriptor::read(*m_Device, currDirIndex);
+    if (absolutePath) path.erase(0, 1); // remove '/'
+
+    while (path.find_first_of('/') != std::string::npos) {
+        const unsigned int sepIndex = path.find_first_of('/');
+        const std::string part = path.substr(0, sepIndex);
+        path.erase(0, sepIndex); // leave '/' for now
+        const auto fdIndexOpt = getFdOfFileWithName(currDir, part);
+        if (!fdIndexOpt) {
+            std::cout << "Invalid path entry: " << part << std::endl;
+            return std::nullopt;
+        }
+        const DeviceFileDescriptor fd = DeviceFileDescriptor::read(*m_Device, *fdIndexOpt);
+        if (fd.fileType == DeviceFileType::Symlink) {
+            const std::string resolvedName = resolveSymlink(fd);
+            path = resolvedName + path;
+            continue;
+        } else if (fd.fileType == DeviceFileType::Directory) {
+            currDirIndex = *fdIndexOpt;
+            currDir = fd;
+        } else {
+            assert(false);
+        }
+
+        path.erase(0, 1); // remove '/'
+    }
+
+    return currDirIndex;
 }
 
 std::string FileSystem::extractName(std::string path) {
@@ -26,7 +54,7 @@ std::string FileSystem::extractName(std::string path) {
 
 std::optional<uint16_t> FileSystem::getFdOfFileWithName(
         const DeviceFileDescriptor& dir,
-        const std::string& name) {
+        const std::string& name) const {
     for (unsigned int i = 0; i < dir.blocks.size(); i += 2) {
         const uint16_t fileNamePtr = dir.blocks[i];
         if (fileNamePtr == DeviceFileDescriptor::FREE_BLOCK) continue;
@@ -34,6 +62,17 @@ std::optional<uint16_t> FileSystem::getFdOfFileWithName(
         if (currName == name) return {dir.blocks[i + 1]};
     }
     return std::nullopt;
+}
+
+std::string FileSystem::resolveSymlink(const DeviceFileDescriptor& fd) const {
+    assert(fd.fileType == DeviceFileType::Symlink);
+    std::string result;
+    for (uint16_t addr : fd.blocks) {
+        if (addr == DeviceFileDescriptor::FREE_BLOCK) break;
+        result += m_Device->readBlock(Device::DATA_START + addr).asString();
+    }
+
+    return result;
 }
 
 bool FileSystem::create(uint16_t dirIndex, DeviceFileDescriptor& dir,
@@ -217,8 +256,12 @@ bool FileSystem::create(std::string path) {
     }
 
     // Find dir
-    const uint16_t dirIndex = getDirByPath(path);
-    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, dirIndex);
+    const auto dirIndexOpt = getDirByPath(path);
+    if (!dirIndexOpt) {
+        std::cout << "Invalid path, cannot create file" << std::endl;
+        return false;
+    }
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *dirIndexOpt);
 
     // Find FD for future file
     const auto freeFdOpt = DeviceFileDescriptor::findFree(*m_Device);
@@ -233,7 +276,7 @@ bool FileSystem::create(std::string path) {
             std::vector<uint16_t>(Device::FD_BLOCKS_PER_FILE, DeviceFileDescriptor::FREE_BLOCK));
     DeviceFileDescriptor::write(*m_Device, *freeFdOpt, fd);
 
-    const bool result = create(dirIndex, dir, name, *freeFdOpt);
+    const bool result = create(*dirIndexOpt, dir, name, *freeFdOpt);
     if (!result) return false;
     std::cout << "Created new file with FD=" << *freeFdOpt << std::endl;
 
@@ -254,7 +297,7 @@ bool FileSystem::open(const std::string& path, unsigned int& fd_out) {
         return false;
     }
 
-    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, getDirByPath(path));
+    DeviceFileDescriptor dir = DeviceFileDescriptor::read(*m_Device, *getDirByPath(path));
     const std::string name = extractName(path);
 
     const auto fileFdOpt = getFdOfFileWithName(dir, name);
@@ -398,9 +441,13 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
         std::cout << "No device currently mounted" << std::endl;
         return false;
     }
-    const uint16_t dirIndex = getDirByPath(name1);
+    const auto dirIndexOpt = getDirByPath(name1);
+    if (!dirIndexOpt) {
+        std::cout << "Cannot create hard link: invalid target path" << std::endl;
+        return false;
+    }
     DeviceFileDescriptor dir =
-        DeviceFileDescriptor::read(*m_Device, dirIndex);
+        DeviceFileDescriptor::read(*m_Device, *dirIndexOpt);
     const std::string fileName = extractName(name1);
     const auto fdIndexOpt = getFdOfFileWithName(dir, fileName);
     if (!fdIndexOpt) {
@@ -412,7 +459,7 @@ bool FileSystem::link(const std::string& name1, const std::string& name2) {
     fd.linksCount++;
     DeviceFileDescriptor::write(*m_Device, *fdIndexOpt, fd);
 
-    const bool result = create(dirIndex, dir, name2, *fdIndexOpt);
+    const bool result = create(*dirIndexOpt, dir, name2, *fdIndexOpt);
     if (!result) return false;
     std::cout << "Creaing a hard link: " << name2 << "=>" << fileName << std::endl;
 
@@ -425,9 +472,13 @@ bool FileSystem::unlink(const std::string& name) {
         return false;
     }
 
-    const unsigned int dirIndex = getDirByPath(name);
+    const auto dirIndexOpt = getDirByPath(name);
+    if (!dirIndexOpt) {
+        std::cout << "Cannot unlink: invalid path" << std::endl;
+        return false;
+    }
     DeviceFileDescriptor dir =
-        DeviceFileDescriptor::read(*m_Device, dirIndex);
+        DeviceFileDescriptor::read(*m_Device, *dirIndexOpt);
     const std::string fileName = extractName(name);
     const auto fdIndexOpt = getFdOfFileWithName(dir, fileName);
     if (!fdIndexOpt) {
@@ -452,7 +503,7 @@ bool FileSystem::unlink(const std::string& name) {
             dir.blocks[i] = DeviceFileDescriptor::FREE_BLOCK;
             dir.blocks[i + 1] = DeviceFileDescriptor::FREE_BLOCK;
             dir.size--;
-            DeviceFileDescriptor::write(*m_Device, dirIndex, dir);
+            DeviceFileDescriptor::write(*m_Device, *dirIndexOpt, dir);
             break;
         }
     }
@@ -479,9 +530,26 @@ bool FileSystem::unlink(const std::string& name) {
     return true;
 }
 
-bool FileSystem::truncate(const std::string& name, unsigned int size) {
+bool FileSystem::mkdir(const std::string& name) {
     return true;
 }
+
+bool FileSystem::rmdir(const std::string& name) {
+    return true;
+}
+
+bool FileSystem::cd(const std::string& name) {
+    return true;
+}
+
+bool FileSystem::pwd() {
+    return true;
+}
+
+bool FileSystem::symlink(const std::string& target, const std::string linkName) {
+    return true;
+}
+
 
 
 std::string toString(Command command) {
@@ -498,6 +566,11 @@ std::string toString(Command command) {
         case Command::Link: return "link";
         case Command::Unlink: return "unlink";
         case Command::Truncate: return "truncate";
+        case Command::Mkdir: return "mkdir";
+        case Command::Rmdir: return "rmdir";
+        case Command::Cd: return "cd";
+        case Command::Pwd: return "pwd";
+        case Command::Symlink: return "symlink";
         case Command::INVALID: return "<invalid>";
     }
     return "<undefined>";
@@ -517,6 +590,11 @@ Command toCommand(const std::string& str) {
     else if (str == "link") return Command::Link;
     else if (str == "unlink") return Command::Unlink;
     else if (str == "truncate") return Command::Truncate;
+    else if (str == "mkdir") return Command::Mkdir;
+    else if (str == "rmdir") return Command::Rmdir;
+    else if (str == "cd") return Command::Cd;
+    else if (str == "pwd") return Command::Pwd;
+    else if (str == "symlink") return Command::Symlink;
 
     return Command::INVALID;
 }
@@ -627,17 +705,49 @@ bool FileSystem::process(Command command, std::vector<std::string>& arguments) {
             }
             return unlink(arguments[0]);
         case Command::Truncate:
+            std::cout << "Operation not supported for now" << std::endl;
+            return true;
+            /* if (arguments.size() != 2) { */
+            /*     std::cout << "Expecting 2 arguments: file name, size" << std::endl; */
+            /*     return false; */
+            /* } */
+            /* try { */
+            /*     const unsigned int size = std::stoi(arguments[1]); */
+            /*     return truncate(arguments[0], size); */
+            /* } catch (std::exception& e) { */
+            /*     std::cout << "Expecting an int argument" << std::endl; */
+            /*     return false; */
+            /* } */
+        case Command::Mkdir:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: directory name" << std::endl;
+                return false;
+            }
+            return mkdir(arguments[0]);
+        case Command::Rmdir:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: directory name" << std::endl;
+                return false;
+            }
+            return rmdir(arguments[0]);
+        case Command::Cd:
+            if (arguments.size() != 1) {
+                std::cout << "Expecting 1 argument: directory name" << std::endl;
+                return false;
+            }
+            return cd(arguments[0]);
+        case Command::Pwd:
+            if (arguments.size() != 0) {
+                std::cout << "Expecting no arguments" << std::endl;
+                return false;
+            }
+            return pwd();
+        case Command::Symlink:
             if (arguments.size() != 2) {
-                std::cout << "Expecting 2 arguments: file name, size" << std::endl;
+                std::cout << "Expecting 2 arguments: target path, link name" << std::endl;
                 return false;
             }
-            try {
-                const unsigned int size = std::stoi(arguments[1]);
-                return truncate(arguments[0], size);
-            } catch (std::exception& e) {
-                std::cout << "Expecting an int argument" << std::endl;
-                return false;
-            }
+            return symlink(arguments[0], arguments[1]);
         default:
             return false;
     }

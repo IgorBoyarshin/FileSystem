@@ -28,6 +28,31 @@
 /* }; */
 
 
+enum class Command {
+    Mount,
+    Umount,
+    Filestat,
+    Ls,
+    Create,
+    Open,
+    Close,
+    Read,
+    Write,
+    Link,
+    Unlink,
+    Truncate,
+    Mkdir,
+    Rmdir,
+    Cd,
+    Pwd,
+    Symlink,
+    INVALID
+};
+
+std::string toString(Command command);
+Command toCommand(const std::string& str);
+
+
 class FileSystem {
     private:
         std::unique_ptr<Device> m_Device;
@@ -48,15 +73,17 @@ class FileSystem {
 
         FileSystem();
 
-        uint16_t getDirByPath(const std::string& path) const;
+        std::optional<uint16_t> getDirByPath(std::string path) const;
         static std::string extractName(std::string path);
 
         std::optional<uint16_t> getFdOfFileWithName(
                 const DeviceFileDescriptor& dir,
-                const std::string& name);
+                const std::string& name) const;
 
         bool create(uint16_t dirIndex, DeviceFileDescriptor& dir,
                 std::string name, uint16_t fdIndex);
+
+        std::string resolveSymlink(const DeviceFileDescriptor& fd) const;
 
     private:
         bool mount(const std::string& deviceName);
@@ -71,6 +98,11 @@ class FileSystem {
         bool link(const std::string& name1, const std::string& name2);
         bool unlink(const std::string& name);
         bool truncate(const std::string& name, unsigned int size);
+        bool mkdir(const std::string& name);
+        bool rmdir(const std::string& name);
+        bool cd(const std::string& name);
+        bool pwd();
+        bool symlink(const std::string& target, const std::string linkName);
 };
 
 

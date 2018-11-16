@@ -87,13 +87,19 @@ void Device::createEmpty(const std::string& name) {
             map.setTaken(2);
         } else if (i == 0) {
             std::vector<uint16_t> addresses(header.blocksPerFile, DeviceFileDescriptor::FREE_BLOCK);
-            addresses[0] = 3; // where name is
-            addresses[1] = 2; // fd
-            addresses[2] = 4; // where name is
-            addresses[3] = 1; // fd
-            fds.emplace_back(DeviceFileType::Directory, 2, 1, addresses);
+            addresses[0] = 5; // where name is
+            addresses[1] = 0; // fd
+            addresses[2] = 6; // where name is
+            addresses[3] = 0; // fd
+            addresses[4] = 3; // where name is
+            addresses[5] = 2; // fd
+            addresses[6] = 4; // where name is
+            addresses[7] = 1; // fd
+            fds.emplace_back(DeviceFileType::Directory, 3, 2, addresses);
             map.setTaken(3);
             map.setTaken(4);
+            map.setTaken(5);
+            map.setTaken(6);
         } else {
             fds.push_back({});
         }
@@ -103,7 +109,7 @@ void Device::createEmpty(const std::string& name) {
     Device::DATA_START = Device::FDS_START + fds.size() * DeviceFileDescriptor::sizeInBlocks();
     header.firstLogicalBlockShift = Device::DATA_START;
     std::vector<uint8_t> data;
-    for (unsigned int i = 0; i < dataCapacityBlocks; i++) {
+    for (unsigned int i = 0; i < dataCapacityBlocks * header.blockSize; i++) {
         data.push_back(0);
     }
 
@@ -124,6 +130,11 @@ void Device::createEmpty(const std::string& name) {
     data[4 * header.blockSize + 4] = 'p';
     data[4 * header.blockSize + 5] = 't';
     data[4 * header.blockSize + 6] = 'y';
+
+    data[5 * header.blockSize + 0] = '.';
+
+    data[6 * header.blockSize + 0] = '.';
+    data[6 * header.blockSize + 1] = '.';
 
     file.write(reinterpret_cast<char*>(&header), 8);
     writeBlocks(file, MAP_START, map.serialize());

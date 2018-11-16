@@ -53,26 +53,6 @@ struct Device {
 };
 
 
-enum class Command {
-    Mount,
-    Umount,
-    Filestat,
-    Ls,
-    Create,
-    Open,
-    Close,
-    Read,
-    Write,
-    Link,
-    Unlink,
-    Truncate,
-    INVALID
-};
-
-std::string toString(Command command);
-Command toCommand(const std::string& str);
-
-
 struct DeviceHeader {
     public:
         uint16_t blockSize; // in bytes
